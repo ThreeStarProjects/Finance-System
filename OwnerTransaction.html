@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Owner Transaction — 3 Star Projects</title>
+<?!= include('_styles') ?>
+<style>
+:root{ --accent:#2C7DA0; --accent-h:#246782; --accent-fg:#fff; }
+.gate{ display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-3); }
+.gate--three{ grid-template-columns:1fr 1fr 1fr; }
+/* 4-button gate: 2×2 grid on desktop, single column on phones. Gives each
+   card breathing room for its title + description without aggressive wrap. */
+.gate--four{ grid-template-columns:1fr 1fr; gap:var(--sp-3); }
+@media (max-width:640px){ .gate, .gate--three, .gate--four{ grid-template-columns:1fr; } }
+.gate-btn{
+  border:2px solid var(--border); border-radius:var(--r-lg);
+  padding:var(--sp-4) var(--sp-4); background:var(--surface);
+  transition:all .15s; text-align:left;
+  display:flex; align-items:flex-start; gap:14px;
+  min-height:96px;
+}
+.gate-btn:hover{ border-color:var(--accent); transform:translateY(-1px); box-shadow:0 2px 6px rgba(0,0,0,.04); }
+.gate-btn__icon{
+  flex:0 0 44px; height:44px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:22px; font-weight:700; line-height:1;
+  background:var(--surface-2, #f4f5f7);
+}
+.gate-btn__body{ flex:1; min-width:0; }
+.gate-btn__t{ font-size:15px; font-weight:700; margin-bottom:4px; line-height:1.3; }
+.gate-btn--company .gate-btn__t{ color:var(--c-primary); }
+.gate-btn--company .gate-btn__icon{ background:#E8F1F8; color:var(--c-primary); }
+.gate-btn--personal .gate-btn__t{ color:var(--c-warm); }
+.gate-btn--personal .gate-btn__icon{ background:#FEF2E0; color:var(--c-warm); }
+.gate-btn--transfer .gate-btn__t{ color:var(--teal, #2C7DA0); }
+.gate-btn--transfer .gate-btn__icon{ background:#E6F0F4; color:var(--teal, #2C7DA0); }
+.gate-btn--float .gate-btn__t{ color:#E94E1B; }
+.gate-btn--float .gate-btn__icon{ background:#FDE9E1; color:#E94E1B; }
+.gate-btn__d{ font-size:12px; color:var(--text-muted); line-height:1.45; }
+.seg{ display:flex; gap:6px; margin-bottom:var(--sp-3); }
+.seg button{ flex:1; padding:10px; border:1px solid var(--border); border-radius:var(--r); background:var(--surface); font-weight:600; font-size:14px; color:var(--text-muted); }
+.seg button.on{ background:var(--c-primary); color:#fff; border-color:var(--c-primary); }
+.hint{ font-size:12px; padding:8px 12px; border-radius:var(--r-sm); margin-top:6px; }
+.hint--warn{ background:#FEF3C7; color:#92400E; }
+.scope-tag{ display:inline-block; padding:4px 12px; border-radius:999px; font-size:12px; font-weight:700; margin-left:8px; }
+@media (min-width:768px){ .container--narrow{ max-width:860px; } }
+/* Multi-expense queue rows */
+.qrow{ display:flex; align-items:center; gap:12px; padding:10px 12px; background:#f8f9fb; border:1px solid #eef0f3; border-radius:8px; margin-bottom:6px; }
+.qrow__body{ flex:1; min-width:0; }
+.qrow__t{ font-size:14px; font-weight:600; color:#0f172a; }
+.qrow__m{ font-size:12px; color:#64748b; margin-top:2px; }
+.qrow__amt{ font-size:14px; font-weight:700; color:#0f172a; white-space:nowrap; }
+.qrow__x{ width:26px; height:26px; border-radius:50%; border:none; background:#fee2e2; color:#b91c1c; font-size:16px; cursor:pointer; line-height:1; }
+.qrow__x:hover{ background:#fecaca; }
+/* Custom autocomplete dropdown for party (customer/vendor) input */
+.vac{ position:absolute; left:0; right:0; top:100%; z-index:50; background:#fff; border:1px solid var(--border-strong); border-radius:var(--r); box-shadow:0 6px 18px rgba(0,0,0,.08); max-height:240px; overflow-y:auto; margin-top:4px; }
+.vac__item{ padding:10px 14px; font-size:14px; cursor:pointer; border-bottom:1px solid var(--border); }
+.vac__item:last-child{ border-bottom:none; }
+.vac__item:hover, .vac__item--active{ background:var(--surface-2); }
+.vac__item mark{ background:#fff3a3; font-weight:700; padding:0; color:inherit; }
+.vac__empty{ padding:10px 14px; font-size:13px; color:var(--text-muted); font-style:italic; }
+</style>
+</head>
+<body>
+<a href="#main" class="skip-link">Skip to content</a>
+<header class="topbar">
+  <div class="topbar__brand"><div class="topbar__mark"></div>
+    <div><div class="topbar__title">Owner Transaction</div><div class="topbar__sub">3 Star Projects</div></div></div>
+  <div class="topbar__actions"><span class="topbar__badge">Owner</span></div>
+</header>
+<main id="main" class="container container--narrow">
+
+  <!-- STEP 0: gate -->
+  <section id="gate-view">
+    <div class="card">
+      <h2 class="card__title">What kind of transaction is this?</h2>
+      <div class="gate gate--four">
+        <button class="gate-btn gate-btn--company" type="button" onclick="pick('Company')">
+          <div class="gate-btn__icon">₹</div>
+          <div class="gate-btn__body">
+            <div class="gate-btn__t">Company Expense</div>
+            <div class="gate-btn__d">Business expense paid by owner. Goes into the books &amp; P&amp;L.</div>
+          </div></button>
+        <button class="gate-btn gate-btn--personal" type="button" onclick="pick('Personal')">
+          <div class="gate-btn__icon">👤</div>
+          <div class="gate-btn__body">
+            <div class="gate-btn__t">Personal</div>
+            <div class="gate-btn__d">Owner's personal spend. Separate ledger. Auto-drawing if from a company account.</div>
+          </div></button>
+        <button class="gate-btn gate-btn--float" type="button" onclick="pick('Float')">
+          <div class="gate-btn__icon">🏗️</div>
+          <div class="gate-btn__body">
+            <div class="gate-btn__t">Site Float Advance</div>
+            <div class="gate-btn__d">Give site cash to a supervisor. Tracked as cash held by them, not an expense.</div>
+          </div></button>
+        <button class="gate-btn gate-btn--transfer" type="button" onclick="pick('Transfer')">
+          <div class="gate-btn__icon">⇄</div>
+          <div class="gate-btn__body">
+            <div class="gate-btn__t">Internal Fund Transfer</div>
+            <div class="gate-btn__d">Move money between accounts. Excluded from P&amp;L.</div>
+          </div></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- SITE FLOAT ADVANCE — simplified, task-oriented form -->
+  <section id="float-view" class="hidden">
+    <div class="card">
+      <div class="card__title-row"><h2 class="card__title">Give site cash to supervisor</h2>
+        <button class="btn btn--sm btn--ghost" type="button" onclick="backToGate()">← Change</button></div>
+      <div class="field" id="f-noholder-wrap" style="display:none;">
+        <div class="hint hint--warn">
+          No supervisors are marked as float holders yet.<br>
+          Open the main app → Masters → Employees, edit a supervisor, tick "Holds Site Float", then run setupFloatAccounts in the script editor.
+        </div>
+      </div>
+      <div class="field"><label for="f-to">Supervisor *</label>
+        <select class="select" id="f-to" onchange="fPreview()"><option value="">Select supervisor…</option></select></div>
+      <div class="field"><label for="f-from">From company account *</label>
+        <select class="select" id="f-from" onchange="fPreview()"><option value="">Select…</option></select></div>
+      <div class="field"><label for="f-amount">Amount (₹) *</label>
+        <input class="il" id="f-amount" type="number" min="0" step="1" oninput="fPreview()" style="width:100%" placeholder="e.g. 5000"></div>
+      <div class="field"><label for="f-date">Date</label>
+        <input class="il" id="f-date" type="date" style="width:100%"></div>
+      <div class="field"><label for="f-notes">Notes</label>
+        <textarea class="textarea" id="f-notes" rows="2" placeholder="e.g. for CEEJAY HOUSE site, week of 27 Jun"></textarea></div>
+      <div id="f-preview" class="adv-panel" style="display:block; margin-bottom:var(--sp-3);">Select supervisor and source account to see classification</div>
+      <button class="btn btn--block btn--lg" id="f-sub" type="button" onclick="submitFloatAdvance()">Record Advance</button>
+    </div>
+  </section>
+
+  <!-- FUND TRANSFER -->
+  <section id="transfer-view" class="hidden">
+    <div class="card">
+      <div class="card__title-row"><h2 class="card__title">Internal fund transfer</h2>
+        <button class="btn btn--sm btn--ghost" type="button" onclick="backToGate()">← Change</button></div>
+      <div class="field"><label for="t-from">From account *</label><select class="select" id="t-from" onchange="tPreview()"><option value="">Select…</option></select></div>
+      <div class="field"><label for="t-to">To account *</label><select class="select" id="t-to" onchange="tPreview()"><option value="">Select…</option></select></div>
+      <div class="field"><label for="t-amount">Amount (₹) *</label><input class="il" id="t-amount" type="number" min="0" step="0.01" oninput="tPreview()" style="width:100%"></div>
+      <div class="field"><label for="t-date">Date</label><input class="il" id="t-date" type="date" style="width:100%"></div>
+      <div class="field"><label for="t-notes">Notes</label><textarea class="textarea" id="t-notes" rows="2" placeholder="purpose of transfer"></textarea></div>
+      <div id="t-preview" class="adv-panel" style="display:block; margin-bottom:var(--sp-3);">Select accounts to see classification</div>
+      <button class="btn btn--block btn--lg" id="t-sub" type="button" onclick="submitTransfer()">Record Transfer</button>
+    </div>
+  </section>
+
+  <!-- COMPANY -->
+  <section id="company-view" class="hidden">
+    <div class="card">
+      <div class="card__title-row"><h2 class="card__title">Company transaction</h2>
+        <button class="btn btn--sm btn--ghost" type="button" onclick="backToGate()">← Change</button></div>
+      <div class="seg" id="dir-seg" style="display:none;">
+        <button type="button" class="on" id="seg-exp" onclick="setDir('OUT')">Expense</button>
+        <button type="button" id="seg-inc" onclick="setDir('IN')">Income</button>
+      </div>
+      <div class="field" id="cat-wrap">
+        <label for="c-cat">Category</label>
+        <select class="select" id="c-cat" onchange="onCat()"><option value="">Select…</option></select>
+      </div>
+      <div class="hidden" id="other-wrap">
+        <div class="grid-2">
+          <div class="field"><label for="c-customcat">New category name</label><input class="input" id="c-customcat" placeholder="Describe it"></div>
+          <div class="field"><label for="c-customgrp">P&amp;L group (required)</label><select class="select" id="c-customgrp"><option value="">Select group…</option></select></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label for="c-date">Date</label><input class="input" type="date" id="c-date"></div>
+        <div class="field"><label for="c-amount">Amount (₹) *</label><input class="input" type="number" id="c-amount" min="0" step="0.01" oninput="syncGstAmount()"></div>
+      </div>
+      <div class="field"><label><input type="checkbox" id="c-gston" onchange="toggleGst()"> This transaction has GST</label></div>
+      <div class="hidden" id="gst-wrap">
+        <div class="grid-3">
+          <div class="field"><label>Taxable value (₹)</label><input class="input" type="number" id="g-taxable" min="0" step="0.01" oninput="calcGst()"></div>
+          <div class="field"><label>GST rate %</label><input class="input" type="number" id="g-rate" min="0" step="0.01" oninput="calcGst()"></div>
+          <div class="field"><label>HSN / SAC</label><input class="input" id="g-hsn"></div>
+        </div>
+        <div class="field"><label style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="g-interstate" onchange="calcGst()">
+          Inter-state (use IGST instead of CGST+SGST)
+        </label></div>
+        <div class="grid-3">
+          <div class="field"><label>CGST</label><input class="input" type="number" id="g-cgst" step="0.01" oninput="syncGstAmount()"></div>
+          <div class="field"><label>SGST</label><input class="input" type="number" id="g-sgst" step="0.01" oninput="syncGstAmount()"></div>
+          <div class="field"><label>IGST</label><input class="input" type="number" id="g-igst" step="0.01" oninput="syncGstAmount()"></div>
+        </div>
+        <div class="hint hint--warn" id="gst-note"></div>
+      </div>
+      <div class="field"><label for="c-desc">Description *</label><input class="input" id="c-desc" placeholder="What was this for?"></div>
+      <div class="grid-2">
+        <div class="field"><label for="c-mode">Payment mode</label><select class="select" id="c-mode"></select></div>
+        <div class="field"><label for="c-source">Source of funds *</label><select class="select" id="c-source"><option value="">Select…</option></select></div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label for="c-project">Project (optional)</label><select class="select" id="c-project"><option value="">None / General</option></select></div>
+        <div class="field" id="party-wrap" style="position:relative;">
+          <label for="c-party" id="party-label">Vendor (optional)</label>
+          <input class="input" id="c-party" autocomplete="off" placeholder="Type any part of the name" oninput="partyAC()" onblur="partyACHide()">
+          <div id="party-ac" class="vac" style="display:none;"></div>
+        </div>
+      </div>
+      <div class="field"><label><input type="checkbox" id="c-adv" onchange="toggleAdv()"> This is an advance to an employee</label></div>
+      <div class="hidden" id="adv-wrap"><div class="field"><label for="c-emp">Employee (on behalf of)</label><select class="select" id="c-emp"><option value="">Select…</option></select></div></div>
+      <div class="field"><label for="c-notes">Notes</label><textarea class="textarea" id="c-notes"></textarea></div>
+      <!-- Queue of already-added expenses in this batch -->
+      <div id="c-queue-wrap" style="display:none; margin-top:var(--sp-3); border-top:1px dashed var(--border); padding-top:var(--sp-3);">
+        <div class="small" style="font-weight:600; margin-bottom:8px; color:var(--c-primary);">
+          Queued in this batch — <span id="c-queue-count">0</span> expense(s), total <span id="c-queue-total">₹0</span>
+        </div>
+        <div id="c-queue-list"></div>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-top:var(--sp-3);">
+        <button class="btn btn--ghost" type="button" onclick="addAnotherExpense()" style="flex:1;">+ Add another expense to batch</button>
+        <button class="btn" id="c-sub" type="button" onclick="submitCompany()" style="flex:2;">Record Transaction</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- PERSONAL -->
+  <section id="personal-view" class="hidden">
+    <div class="card">
+      <div class="card__title-row"><h2 class="card__title">Personal transaction</h2>
+        <button class="btn btn--sm btn--ghost" type="button" onclick="backToGate()">← Change</button></div>
+      <div class="grid-2">
+        <div class="field"><label for="p-date">Date</label><input class="input" type="date" id="p-date"></div>
+        <div class="field"><label for="p-amount">Amount (₹) *</label><input class="input" type="number" id="p-amount" min="0" step="0.01"></div>
+      </div>
+      <div class="field"><label for="p-cat">Category</label><select class="select" id="p-cat"><option value="">Select…</option></select></div>
+      <div class="field"><label for="p-desc">Description</label><input class="input" id="p-desc" placeholder="What was this for?"></div>
+      <div class="grid-2">
+        <div class="field"><label for="p-mode">Payment mode</label><select class="select" id="p-mode"></select></div>
+        <div class="field"><label for="p-source">Source of funds *</label><select class="select" id="p-source" onchange="checkPersonalSource()"><option value="">Select…</option></select></div>
+      </div>
+      <div class="hint hint--warn hidden" id="p-drawnote">Paid from a company account → this will also be recorded as an Owner Drawing in the company books so cash stays accurate.</div>
+      <div class="field"><label for="p-notes">Notes</label><textarea class="textarea" id="p-notes"></textarea></div>
+      <button class="btn btn--block btn--lg btn--warm" id="p-sub" type="button" onclick="submitPersonal()">Record Personal</button>
+    </div>
+  </section>
+</main>
+<?!= include('_helpers') ?>
+<script>
+var CFG={}, DIR='OUT';
+window.onload=function(){
+  google.script.run.withSuccessHandler(function(cfg){ CFG=cfg; init(); })
+    .withFailureHandler(function(e){ toast('Load failed: '+e.message,'e'); }).getBootstrap();
+};
+function init(){
+  $('c-date').value=todayISO(); $('p-date').value=todayISO();
+  // category dropdown (expense by default)
+  paintCats();
+  fill('c-customgrp', CFG.pnlGroups||[]);
+  fill('c-mode', CFG.paymentModes||[]); fill('p-mode', CFG.paymentModes||[]);
+  fill('c-project', (CFG.projects||[]), true);
+  fill('c-emp', CFG.employees||[]);
+  // sources with Personal/Company tag
+  var srcOpts='<option value="">Select…</option>';
+  (CFG.sourcesOfFunds||[]).forEach(function(s){ srcOpts+='<option value="'+esc(s.value)+'" data-attr="'+esc(s.attribute)+'">'+esc(s.value)+' ('+esc(s.attribute)+')</option>'; });
+  $('c-source').innerHTML=srcOpts; $('p-source').innerHTML=srcOpts;
+  // vendors for expense / customers for income
+  paintParty();
+  // personal categories
+  fill('p-cat', CFG.personalCategories||[]);
+  // fund transfer accounts
+  var acctOpts='<option value="">Select…</option>'+
+    (CFG.accounts||[]).map(function(a){ return '<option value="'+esc(a.id)+'">'+esc(a.name)+'</option>'; }).join('');
+  if($('t-from')) $('t-from').innerHTML=acctOpts;
+  if($('t-to'))   $('t-to').innerHTML=acctOpts;
+  if($('t-date')) $('t-date').value=todayISO();
+
+  // Site Float Advance — populate supervisor + source dropdowns
+  var floats = (CFG.accounts||[]).filter(function(a){ return a.side==='Float'; });
+  var company = (CFG.accounts||[]).filter(function(a){ return a.side==='Company'; });
+  if ($('f-to')){
+    if (!floats.length){
+      $('f-noholder-wrap').style.display='block';
+      $('f-to').innerHTML='<option value="">No float holders found</option>';
+      $('f-to').disabled=true;
+      $('f-sub').disabled=true;
+    } else {
+      $('f-to').innerHTML='<option value="">Select supervisor…</option>'+
+        floats.map(function(a){ return '<option value="'+esc(a.id)+'">'+esc(a.owner)+' &nbsp;('+esc(a.name)+')</option>'; }).join('');
+    }
+  }
+  if ($('f-from')){
+    $('f-from').innerHTML='<option value="">Select…</option>'+
+      company.map(function(a){ return '<option value="'+esc(a.id)+'">'+esc(a.name)+'</option>'; }).join('');
+  }
+  if ($('f-date')) $('f-date').value=todayISO();
+}
+function fill(id, arr, generalFirst){ var el=$(id); if(!el) return;
+  el.innerHTML=(generalFirst?'<option value="">None / General</option>':(el.id==='c-emp'||el.id==='p-cat'?'<option value="">Select…</option>':''))+buildOptions(arr); }
+function paintCats(){
+  // Strict match: expense dropdown gets ONLY rows whose Direction = 'OUT'
+  // in M_Category, income gets ONLY 'IN'. Blank-direction rows do not leak.
+  var want = (DIR === 'IN') ? 'IN' : 'OUT';
+  var cats=(CFG.categories||[]).filter(function(c){ return c.direction === want; })
+    .map(function(c){return c.category;});
+  $('c-cat').innerHTML='<option value="">Select…</option>'+buildOptions(cats)+'<option value="Other">+ Other (add new)</option>';
+}
+function paintParty(){
+  var lbl=$('party-label'), inp=$('c-party');
+  lbl.textContent = (DIR==='IN'?'Customer':'Vendor') + ' (optional)';
+  inp.placeholder = 'Type any part of the name';
+  inp.value='';
+  var box = $('party-ac'); if (box){ box.style.display='none'; box.innerHTML=''; }
+}
+
+// ── Substring autocomplete for the party (customer/vendor) input ───────
+// Matches anywhere in the name (not just prefix), with smart ranking:
+//   100 exact, 90 prefix of full name, 80 prefix of any word, 60 anywhere.
+// Highlights the matched chunk so it's obvious why a result appeared.
+function _normForAC(s){
+  return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
+}
+function _highlight(name, q){
+  if (!q) return esc(name);
+  var rx;
+  try { rx = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')','ig'); }
+  catch(e){ return esc(name); }
+  return esc(name).replace(rx, '<mark>$1</mark>');
+}
+function partyAC(){
+  var inp = $('c-party'); var box = $('party-ac');
+  if (!inp || !box) return;
+  var q = inp.value.trim();
+  if (q.length < 2){ box.style.display='none'; box.innerHTML=''; return; }
+  var nq = _normForAC(q);
+  var list = DIR==='IN' ? (CFG.customers||[]) : (CFG.vendors||[]);
+  var out = [];
+  for (var i=0; i<list.length; i++){
+    var name = list[i].name || ''; var n = _normForAC(name);
+    if (!n) continue;
+    var score = 0;
+    if (n === nq)                                                score = 100;
+    else if (n.indexOf(nq) === 0)                                score = 90;
+    else if ((' '+n).indexOf(' '+nq) !== -1)                     score = 80;   // start of any word
+    else if (n.indexOf(nq) !== -1)                               score = 60;   // anywhere
+    if (score > 0) out.push({name:name, score:score});
+  }
+  out.sort(function(a,b){
+    if (b.score !== a.score) return b.score - a.score;
+    return a.name.localeCompare(b.name);
+  });
+  out = out.slice(0, 12);
+  if (!out.length){
+    box.innerHTML = '<div class="vac__empty">No existing '+ (DIR==='IN'?'customer':'vendor') +' matches — typing creates a new one.</div>';
+    box.style.display = 'block';
+    return;
+  }
+  box.innerHTML = out.map(function(m){
+    var safe = m.name.replace(/'/g,"\\'");
+    return '<div class="vac__item" onmousedown="partyACPick(\''+safe+'\')">' + _highlight(m.name, q) + '</div>';
+  }).join('');
+  box.style.display = 'block';
+}
+function partyACPick(name){
+  var inp = $('c-party'); if (inp) inp.value = name;
+  partyACHide();
+}
+function partyACHide(){
+  setTimeout(function(){ var box = $('party-ac'); if (box) box.style.display='none'; }, 150);
+}
+
+function pick(scope){
+  $('gate-view').classList.add('hidden');
+  var view;
+  if (scope==='Company') view='company';
+  else if (scope==='Personal') view='personal';
+  else if (scope==='Float') view='float';
+  else view='transfer';
+  $(view+'-view').classList.remove('hidden');
+}
+function backToGate(){
+  $('company-view').classList.add('hidden');
+  $('personal-view').classList.add('hidden');
+  $('transfer-view').classList.add('hidden');
+  $('float-view').classList.add('hidden');
+  $('gate-view').classList.remove('hidden');
+}
+
+function _acct(id){ return (CFG.accounts||[]).filter(function(a){return a.id===id;})[0]||null; }
+function tPreview(){
+  var from=_acct($('t-from').value), to=_acct($('t-to').value), amt=parseFloat($('t-amount').value)||0;
+  var box=$('t-preview');
+  if(!from||!to){ box.textContent='Select accounts to see classification'; return; }
+  if(from.id===to.id){ box.innerHTML='<b style="color:var(--c-danger)">From and To must differ</b>'; return; }
+  var cat;
+  if (to.side==='Float') cat='Site Float Advance to ' + to.owner;
+  else if (from.side==='Float' && to.side==='Company') cat='Float Return from ' + from.owner;
+  else if (from.side==='Float' && to.side==='Personal') cat='Float Return (to owner personal — unusual)';
+  else if (from.side==='Personal'&&to.side==='Company') cat='Fund In (Owner)';
+  else if (from.side==='Company'&&to.side==='Personal') cat='Fund Out (Owner)';
+  else cat='Internal Transfer';
+  box.innerHTML='<b>'+esc(cat)+'</b><br>'+esc(from.name)+' → '+esc(to.name)+
+    (amt>0?'<br>Amount: ₹'+fmt(amt):'')+'<br><span style="color:var(--text-muted)">Recorded as Transfer — excluded from P&amp;L</span>';
+}
+function submitTransfer(){
+  var data={ fromAccount:$('t-from').value, toAccount:$('t-to').value,
+    amount:parseFloat($('t-amount').value)||0, txDate:$('t-date').value, notes:$('t-notes').value };
+  if(!data.fromAccount||!data.toAccount){ toast('Select both accounts','e'); return; }
+  if(data.fromAccount===data.toAccount){ toast('Accounts must differ','e'); return; }
+  if(data.amount<=0){ toast('Enter an amount','e'); return; }
+  $('t-sub').disabled=true;
+  google.script.run
+    .withSuccessHandler(function(res){
+      $('t-sub').disabled=false;
+      if(!res||!res.success){ toast((res&&res.message)||'Failed','e'); return; }
+      toast(res.message||'Transfer recorded','s');
+      $('t-amount').value=''; $('t-notes').value=''; tPreview();
+    })
+    .withFailureHandler(function(e){ $('t-sub').disabled=false; toast('Failed: '+e.message,'e'); })
+    .recordFundTransfer(data);
+}
+
+// ── Site Float Advance — task-oriented preview + submit ──
+// This is a thin wrapper over recordFundTransfer (Company → Float) that
+// presents the action in human terms: "Give site cash to <supervisor>"
+// rather than "Internal transfer between accounts".
+function fPreview(){
+  var from=_acct($('f-from').value), to=_acct($('f-to').value), amt=parseFloat($('f-amount').value)||0;
+  var box=$('f-preview');
+  if (!from || !to){ box.textContent='Select supervisor and source account to see classification'; return; }
+  if (from.id===to.id){ box.innerHTML='<b style="color:var(--c-danger)">Source and float account must differ</b>'; return; }
+  if (to.side !== 'Float'){ box.innerHTML='<b style="color:var(--c-danger)">Selected supervisor account is not a float account</b>'; return; }
+  if (from.side !== 'Company'){ box.innerHTML='<b style="color:var(--c-danger)">Source must be a company account</b>'; return; }
+  box.innerHTML =
+    '<b>Site Float Advance to '+esc(to.owner)+'</b><br>' +
+    esc(from.name)+' → '+esc(to.name) +
+    (amt>0 ? '<br>Amount: ₹'+fmt(amt) : '') +
+    '<br><span style="color:var(--text-muted)">Recorded as Transfer — excluded from P&amp;L. The supervisor now holds ₹'+fmt(amt)+' of company cash.</span>';
+}
+function submitFloatAdvance(){
+  var to = _acct($('f-to').value);
+  var from = _acct($('f-from').value);
+  var amt = parseFloat($('f-amount').value)||0;
+  if (!to || !from){ toast('Select supervisor and source account','e'); return; }
+  if (to.id === from.id){ toast('Source and float account must differ','e'); return; }
+  if (to.side !== 'Float'){ toast('Selected supervisor account is not a float account','e'); return; }
+  if (from.side !== 'Company'){ toast('Source must be a company account','e'); return; }
+  if (amt <= 0){ toast('Enter an amount','e'); return; }
+
+  // Auto-build a sensible note prefix so the audit trail is obvious in the ledger
+  var rawNote = ($('f-notes').value||'').trim();
+  var prefix = 'Site Float Advance to ' + to.owner;
+  var note = rawNote ? (prefix + ' — ' + rawNote) : prefix;
+
+  var data = {
+    fromAccount: from.id,
+    toAccount:   to.id,
+    amount:      amt,
+    txDate:      $('f-date').value,
+    notes:       note
+  };
+  $('f-sub').disabled=true;
+  google.script.run
+    .withSuccessHandler(function(res){
+      $('f-sub').disabled=false;
+      if (!res || !res.success){ toast((res && res.message) || 'Failed','e'); return; }
+      toast('Advance recorded — '+to.owner+' now holds ₹'+fmt(amt)+' more','s');
+      $('f-amount').value=''; $('f-notes').value=''; fPreview();
+    })
+    .withFailureHandler(function(e){ $('f-sub').disabled=false; toast('Failed: '+e.message,'e'); })
+    .recordFundTransfer(data);
+}
+
+function setDir(d){ DIR=d; $('seg-exp').classList.toggle('on',d==='OUT'); $('seg-inc').classList.toggle('on',d==='IN'); paintCats(); paintParty(); }
+function onCat(){ $('other-wrap').classList.toggle('hidden', $('c-cat').value!=='Other'); }
+function toggleGst(){ $('gst-wrap').classList.toggle('hidden', !$('c-gston').checked); syncGstAmount(); }
+function calcGst(){
+  var tax=parseFloat($('g-taxable').value)||0, rate=parseFloat($('g-rate').value)||0;
+  var interstate = $('g-interstate') && $('g-interstate').checked;
+  if(rate>0){
+    var full = tax*rate/100;
+    if (interstate){
+      $('g-cgst').value = '';
+      $('g-sgst').value = '';
+      $('g-igst').value = full.toFixed(2);
+    } else {
+      var half = full/2;
+      $('g-cgst').value = half.toFixed(2);
+      $('g-sgst').value = half.toFixed(2);
+      $('g-igst').value = '';
+    }
+  }
+  syncGstAmount();
+}
+function syncGstAmount(){
+  if(!$('c-gston').checked){ $('gst-note').textContent=''; return; }
+  var tax=parseFloat($('g-taxable').value)||0, c=parseFloat($('g-cgst').value)||0, s=parseFloat($('g-sgst').value)||0, ig=parseFloat($('g-igst').value)||0;
+  var total=tax+c+s+ig; $('c-amount').value=total.toFixed(2);
+  $('gst-note').textContent='Total = ₹'+fmt(total)+' (taxable ₹'+fmt(tax)+' + GST ₹'+fmt(c+s+ig)+')';
+}
+function toggleAdv(){ $('adv-wrap').classList.toggle('hidden', !$('c-adv').checked); }
+
+// ── Multi-expense queue for Owner Company form ─────────────
+// Users can queue N expenses before submitting them all in one batch.
+// Each queued item captures the row-specific fields; shared fields (date,
+// project, source, mode) can be edited freely — the LATEST value is what
+// applies to the just-added row, not retroactively to earlier rows.
+var QUEUE = [];
+
+// Validate the currently-filled form. Returns the row object or null (with a toast).
+function _collectCurrentExpense(){
+  var cat=$('c-cat').value; if(!cat){ toast('Select a category','e'); return null; }
+  var amt=parseFloat($('c-amount').value); if(!amt||amt<=0){ toast('Enter amount','e'); return null; }
+  var desc=$('c-desc').value.trim(); if(!desc){ toast('Enter description','e'); return null; }
+  var source=$('c-source').value; if(!source){ toast('Select source of funds','e'); return null; }
+  var mode=$('c-mode').value; if(!mode){ toast('Select payment mode','e'); return null; }
+  if(cat==='Other'){
+    if(!$('c-customcat').value.trim()){ toast('Name the new category','e'); return null; }
+    if(!$('c-customgrp').value){ toast('Pick a P&L group','e'); return null; }
+  }
+  if(/\(Specify\)\s*$/.test(cat) && !$('c-notes').value.trim()){
+    toast('Notes are required when picking "' + cat + '"','e'); return null;
+  }
+  var gstOn=$('c-gston').checked;
+  return {
+    direction:DIR, category:cat,
+    customCategory:$('c-customcat').value.trim(), customGroup:$('c-customgrp').value,
+    txDate:$('c-date').value, amount:amt, paymentMode:mode, source:source, description:desc,
+    project:$('c-project').value, partyId:'', party:($('c-party').value||'').trim(),
+    onBehalfOf:$('c-adv').checked?$('c-emp').value:'', isAdvance:$('c-adv').checked,
+    taxable:gstOn?($('g-taxable').value||''):'', gstRate:gstOn?($('g-rate').value||''):'',
+    cgst:gstOn?($('g-cgst').value||''):'', sgst:gstOn?($('g-sgst').value||''):'',
+    igst:gstOn?($('g-igst').value||''):'', hsnSac:gstOn?$('g-hsn').value:'',
+    notes:$('c-notes').value.trim()
+  };
+}
+
+// Clear the row-specific fields (leave date, project, source, mode intact
+// since those tend to be shared across a batch).
+function _clearRowFields(){
+  $('c-cat').value = '';
+  $('c-customcat').value = '';
+  $('c-customgrp').value = '';
+  $('c-amount').value = '';
+  $('c-desc').value = '';
+  $('c-party').value = '';
+  $('c-notes').value = '';
+  $('c-adv').checked = false;
+  toggleAdv();
+  $('c-gston').checked = false;
+  toggleGst();
+  onCat();
+  window.scrollTo({top:0, behavior:'smooth'});
+  $('c-cat').focus();
+}
+
+function _renderQueue(){
+  var wrap = $('c-queue-wrap');
+  if (!QUEUE.length){ wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  var total = QUEUE.reduce(function(s,e){ return s + e.amount; }, 0);
+  $('c-queue-count').textContent = QUEUE.length;
+  $('c-queue-total').textContent = '₹ ' + fmt(total);
+  $('c-queue-list').innerHTML = QUEUE.map(function(e, i){
+    return '<div class="qrow">' +
+      '<div class="qrow__body">' +
+        '<div class="qrow__t">'+ esc(e.category) +' &nbsp;·&nbsp; <span style="color:var(--text-muted)">'+ esc(e.description) +'</span></div>' +
+        (e.party ? '<div class="qrow__m">Party: '+ esc(e.party) +'</div>' : '') +
+      '</div>' +
+      '<div class="qrow__amt">₹ '+ fmt(e.amount) +'</div>' +
+      '<button class="qrow__x" type="button" onclick="_removeFromQueue('+ i +')" title="Remove">×</button>' +
+    '</div>';
+  }).join('');
+}
+function _removeFromQueue(i){ QUEUE.splice(i,1); _renderQueue(); }
+
+function addAnotherExpense(){
+  var row = _collectCurrentExpense();
+  if (!row) return;
+  QUEUE.push(row);
+  _renderQueue();
+  _clearRowFields();
+  toast('Queued — fill next expense, then Record Transaction to submit all','s');
+}
+
+function submitCompany(){
+  // If there's data in the form, validate + include it. If form is empty
+  // BUT queue has items, submit just the queue.
+  var hasAny = ($('c-cat').value || $('c-amount').value || $('c-desc').value.trim());
+  var currentRow = null;
+  if (hasAny){
+    currentRow = _collectCurrentExpense();
+    if (!currentRow) return;
+  }
+  var batch = QUEUE.slice();
+  if (currentRow) batch.push(currentRow);
+  if (!batch.length){ toast('Add at least one expense','e'); return; }
+
+  var btn=$('c-sub'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Recording…';
+
+  // Submit sequentially so IDs assign cleanly and errors halt at the failing row.
+  var results = [];
+  var idx = 0;
+  function next(){
+    if (idx >= batch.length){
+      // All done
+      var okCount = results.filter(function(r){ return r && r.success; }).length;
+      var fails = results.length - okCount;
+      if (fails === 0){
+        toast('✓ Recorded '+ okCount +' transaction(s)','s');
+        setTimeout(function(){ location.reload(); }, 1800);
+      } else {
+        toast('Recorded '+ okCount +' · '+ fails +' failed — check console','e');
+        btn.disabled = false;
+        btn.textContent = 'Record Transaction';
+      }
+      return;
+    }
+    var row = batch[idx];
+    google.script.run
+      .withSuccessHandler(function(r){ results.push(r); idx++; next(); })
+      .withFailureHandler(function(e){ results.push({success:false, message:e.message}); idx++; next(); })
+      .submitOwnerTransaction(row);
+  }
+  next();
+}
+
+function checkPersonalSource(){
+  var sel=$('p-source'), attr=sel.selectedIndex>0?sel.options[sel.selectedIndex].getAttribute('data-attr'):'';
+  $('p-drawnote').classList.toggle('hidden', attr!=='Company');
+}
+function submitPersonal(){
+  var amt=parseFloat($('p-amount').value); if(!amt||amt<=0){ toast('Enter amount','e'); return; }
+  var cat=$('p-cat').value; if(!cat){ toast('Select a category','e'); return; }
+  var source=$('p-source').value; if(!source){ toast('Select source of funds','e'); return; }
+  var mode=$('p-mode').value; if(!mode){ toast('Select payment mode','e'); return; }
+  var btn=$('p-sub'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Recording…';
+  google.script.run.withSuccessHandler(function(r){
+    if(r&&r.success){ toast(r.autoDrawing?'Recorded + drawing posted':'Recorded','s'); setTimeout(function(){ location.reload(); },1800); }
+    else { toast('Error: '+(r&&r.message||'unknown'),'e'); btn.disabled=false; btn.textContent='Record Personal'; }
+  }).withFailureHandler(function(e){ toast('Error: '+e.message,'e'); btn.disabled=false; btn.textContent='Record Personal'; })
+  .submitPersonalTransaction({ txDate:$('p-date').value, category:cat, amount:amt, source:source,
+    paymentMode:mode, description:$('p-desc').value.trim(), notes:$('p-notes').value.trim() });
+}
+</script>
+</body>
+</html>

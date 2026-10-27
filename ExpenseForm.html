@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Submit Expense — Three Star Projects</title>
+<?!= include('_styles') ?>
+<style>
+:root{ --accent:#1F4E79; --accent-h:#173E60; --accent-fg:#fff; }
+.block{ background:var(--surface-2); border:1px solid var(--border); border-radius:var(--r-lg); padding:var(--sp-4); margin-bottom:var(--sp-3); position:relative; }
+.block__head{ display:flex; align-items:center; gap:8px; font-size:11px; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:.5px; margin-bottom:var(--sp-3); }
+.block__num{ background:var(--accent); color:var(--accent-fg); width:22px; height:22px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:11px; }
+.block__rm{ position:absolute; top:10px; right:10px; width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; border-radius:var(--r); color:var(--text-muted); }
+.block__rm:hover{ background:var(--surface-3); color:var(--c-danger); }
+.add-block{ width:100%; padding:var(--sp-3); border:2px dashed var(--border-strong); border-radius:var(--r); background:transparent; color:var(--accent); font-size:14px; font-weight:600; min-height:48px; display:flex; align-items:center; justify-content:center; gap:6px; }
+.add-block:hover{ border-color:var(--accent); background:var(--c-primary-l); }
+.total-bar{ background:linear-gradient(135deg,var(--c-primary) 0%,#163654 100%); border-radius:var(--r-lg); padding:var(--sp-4) var(--sp-5); display:flex; align-items:center; justify-content:space-between; margin:var(--sp-3) 0; color:#fff; }
+.total-bar__lbl{ color:rgba(255,255,255,.85); font-size:13px; } .total-bar__val{ font-size:26px; font-weight:800; }
+.file-row{ display:flex; align-items:center; gap:8px; padding:11px 14px; border:1.5px dashed var(--border-strong); border-radius:var(--r); background:var(--surface-2); font-size:14px; color:var(--text-muted); cursor:pointer; min-height:44px; }
+.file-row:hover{ border-color:var(--accent); color:var(--accent); } .file-row svg{ width:16px; height:16px; }
+/* Custom autocomplete dropdown (substring matching, ranked) */
+.vac{
+  position:absolute; left:0; right:0; top:100%; z-index:50;
+  background:#fff; border:1px solid var(--border-strong); border-radius:var(--r);
+  box-shadow:0 6px 18px rgba(0,0,0,.08); max-height:240px; overflow-y:auto;
+  margin-top:4px;
+}
+.vac__item{
+  padding:10px 14px; font-size:14px; cursor:pointer;
+  border-bottom:1px solid var(--border);
+}
+.vac__item:last-child{ border-bottom:none; }
+.vac__item:hover, .vac__item--active{ background:var(--surface-2); }
+.vac__item mark{ background:#fff3a3; font-weight:700; padding:0; color:inherit; }
+.vac__meta{ font-size:11px; color:var(--text-muted); margin-top:2px; }
+.vac__empty{ padding:10px 14px; font-size:13px; color:var(--text-muted); font-style:italic; }
+@media (min-width:768px){ .container--narrow{ max-width:820px; } }
+/* Submit-summary modal */
+.ss-wrap{ position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; padding:16px; }
+.ss-back{ position:absolute; inset:0; background:rgba(15,23,42,.55); backdrop-filter:blur(2px); }
+.ss-panel{ position:relative; background:#fff; border-radius:14px; box-shadow:0 20px 60px rgba(0,0,0,.2); max-width:640px; width:100%; max-height:90vh; overflow:hidden; display:flex; flex-direction:column; }
+.ss-head{ display:flex; align-items:center; gap:14px; padding:20px 24px; background:linear-gradient(135deg,#1F4E79,#2C7DA0); color:#fff; }
+.ss-check{ width:44px; height:44px; border-radius:50%; background:#22c55e; color:#fff; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:800; }
+.ss-title{ font-size:18px; font-weight:700; }
+.ss-sub{ font-size:13px; opacity:.9; margin-top:2px; }
+.ss-body{ padding:20px 24px; overflow-y:auto; }
+.ss-table{ width:100%; border-collapse:collapse; font-size:14px; }
+.ss-table th{ text-align:left; padding:8px 10px; background:#f4f5f7; font-weight:600; color:#475569; font-size:12px; text-transform:uppercase; letter-spacing:.03em; }
+.ss-table td{ padding:10px; border-bottom:1px solid #eef0f3; }
+.ss-table tfoot td{ border-bottom:none; padding-top:14px; }
+.ss-table .num{ text-align:right; white-space:nowrap; }
+.ss-meta{ display:inline-block; background:#eef4fa; color:#1F4E79; padding:2px 8px; border-radius:10px; font-size:11px; margin-left:6px; }
+.ss-float{ margin-top:16px; padding:12px 14px; background:#fef3c7; border-radius:8px; color:#92400e; font-size:14px; }
+.ss-actions{ padding:16px 24px; background:#f8f9fb; border-top:1px solid #eef0f3; display:flex; gap:12px; justify-content:flex-end; }
+@media (max-width:640px){ .ss-actions{ flex-direction:column-reverse; } .ss-actions .btn{ width:100%; } }
+/* Expense/Advance tab switcher */
+.ef-tabs{ display:flex; gap:4px; margin:12px 0; background:#eef2f7; padding:4px; border-radius:10px; }
+.ef-tab{ flex:1; padding:10px 12px; border:none; background:transparent; border-radius:8px; font-size:14px; font-weight:600; color:#475569; cursor:pointer; }
+.ef-tab.is-active{ background:#fff; color:#0F172A; box-shadow:0 1px 3px rgba(15,23,42,.08); }
+.ef-tab:focus-visible{ outline:2px solid #2C7DA0; outline-offset:2px; }
+/* Error modal */
+.err-wrap{ position:fixed; inset:0; z-index:300; display:flex; align-items:center; justify-content:center; padding:16px; }
+.err-back{ position:absolute; inset:0; background:rgba(15,23,42,.55); backdrop-filter:blur(2px); }
+.err-panel{ position:relative; background:#fff; border-radius:14px; box-shadow:0 20px 60px rgba(0,0,0,.2); max-width:480px; width:100%; }
+.err-head{ display:flex; align-items:center; gap:14px; padding:20px 24px; background:linear-gradient(135deg,#DC2626,#B91C1C); color:#fff; }
+.err-icon{ width:44px; height:44px; border-radius:50%; background:#fecaca; color:#DC2626; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:800; }
+.err-title{ font-size:18px; font-weight:700; }
+.err-body{ padding:20px 24px; font-size:14px; color:#475569; }
+.err-actions{ padding:16px 24px; background:#f8f9fb; border-top:1px solid #eef0f3; display:flex; gap:12px; justify-content:flex-end; }
+/* Project Costs action buttons */
+.pc-button-group{ display:flex; gap:12px; margin-top:16px; }
+.pc-button-group .btn{ flex:1; }
+@media (max-width:640px){ .pc-button-group{ flex-direction:column; } }
+</style>
+</head>
+<body>
+<a href="#main" class="skip-link">Skip to content</a>
+<header class="topbar">
+  <div class="topbar__brand"><div class="topbar__mark"></div>
+    <div><div class="topbar__title">Submit Expense</div><div class="topbar__sub" id="greeting">Three Star Projects · Finance System</div></div></div>
+  <div class="topbar__actions"><span class="topbar__badge">Employee</span></div>
+</header>
+<main id="main" class="container container--narrow">
+  <div class="card">
+    <h2 class="card__title">Who is submitting?</h2>
+    <div class="field"><label for="emp">Your name</label>
+      <select class="select" id="emp" onchange="onEmpChange()"><option value="">Loading…</option></select></div>
+  </div>
+
+  <!-- Tab switcher — separates "Submit Expense", "Request Advance", and "Project Costs" -->
+  <div class="ef-tabs" role="tablist">
+    <button class="ef-tab is-active" type="button" id="ef-tab-exp" role="tab" onclick="efShowTab('exp')">Submit Expense</button>
+    <button class="ef-tab"           type="button" id="ef-tab-adv" role="tab" onclick="efShowTab('adv')">Request Advance</button>
+    <button class="ef-tab"           type="button" id="ef-tab-pc"  role="tab" onclick="efShowTab('pc')">Project Costs</button>
+  </div>
+
+  <!-- Expense tab -->
+  <div id="ef-pane-exp">
+    <div class="card">
+      <div class="card__title-row"><h2 class="card__title">Expenses</h2></div>
+      <div id="blocks"></div>
+      <button class="add-block" type="button" onclick="addBlock()">+ Add another expense</button>
+    </div>
+    <div class="total-bar"><span class="total-bar__lbl">Running total</span><span class="total-bar__val" id="rtot">₹0.00</span></div>
+    <button class="btn btn--block btn--lg" id="sub-btn" type="button" onclick="doSubmit()">Submit Expenses</button>
+  </div>
+
+  <!-- Advance-request tab (Tier 3.3) — same flow, moved to its own tab -->
+  <div id="ef-pane-adv" style="display:none">
+    <div class="card" id="adv-card">
+      <div class="card__title-row">
+        <h2 class="card__title">Request an advance</h2>
+        <span class="muted small" id="adv-hint">Pick your name above to enable</span>
+      </div>
+      <div class="field"><label for="adv-amt">Amount (₹)</label>
+        <input type="number" min="1" step="1" class="input" id="adv-amt" inputmode="numeric" placeholder="e.g. 5000"></div>
+      <div class="field"><label for="adv-reason">Reason (optional)</label>
+        <textarea class="input" id="adv-reason" rows="2" placeholder="e.g. medical / travel / family need"></textarea></div>
+      <button class="btn btn--block btn--lg" type="button" id="adv-submit-btn" onclick="submitAdvance()" disabled>Submit request</button>
+
+      <div id="adv-recent-wrap" style="margin-top:14px; display:none">
+        <div class="muted small" style="margin-bottom:6px">My recent requests</div>
+        <div id="adv-recent"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Project Costs tab (Batch 10 — category-based) -->
+  <div id="ef-pane-pc" style="display:none">
+    <div class="card">
+      <div class="card__title-row"><h2 class="card__title">Add Project Cost</h2></div>
+      <div class="grid-3">
+        <div class="field"><label>Project *</label>
+          <select class="select" id="pc-project"><option value="">Select project…</option></select>
+        </div>
+        <div class="field"><label>Date *</label>
+          <input class="input" type="date" id="pc-date" />
+        </div>
+        <div class="field"><label>Entry Type *</label>
+          <select class="select" id="pc-type" onchange="pcUpdateFields()">
+            <option value="Simple">Simple</option>
+            <option value="Material">Material</option>
+          </select>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label>Subcategory *</label>
+          <select class="select" id="pc-subcat" onchange="pcUpdateCategory()">
+            <option value="">Select subcategory…</option>
+          </select>
+        </div>
+        <div class="field"><label>Category (auto)</label>
+          <input class="input" type="text" id="pc-cat" readonly style="background:#f1f5f9;" />
+        </div>
+      </div>
+      <div id="pc-fields"></div>
+
+      <button class="btn btn--block btn--lg btn--primary" type="button" onclick="pcSubmitSingle()" style="margin-top:16px;" id="pc-submit-single-btn">Submit Project Cost</button>
+    </div>
+  </div>
+</main>
+<?!= include('_helpers') ?>
+<script>
+var CFG = {}, bc = 0;
+var LOCATIONS = ['On-site','Factory (Dombivli)','Office (Thane)','Vendor','Others'];
+
+window.onload = function(){
+  google.script.run.withSuccessHandler(function(cfg){
+    CFG = cfg;
+    var s = $('emp'); s.innerHTML = '<option value="">Select your name…</option>';
+    (cfg.employees||[]).forEach(function(n){ var o=document.createElement('option'); o.value=o.textContent=n; s.appendChild(o); });
+    // Populate Project Costs project dropdown
+    var ps = $('pc-project');
+    if (ps){
+      ps.innerHTML = '<option value="">Select project…</option>';
+      (cfg.projects||[]).forEach(function(p){ var o=document.createElement('option'); o.value=o.textContent=p; ps.appendChild(o); });
+    }
+    // Initialize Project Costs tab: load categories, set default date, show Simple fields
+    if($('pc-date')) $('pc-date').value = new Date().toISOString().split('T')[0];
+    if(typeof pcLoadCategories === 'function') pcLoadCategories(function(){
+      if(typeof pcUpdateFields === 'function') pcUpdateFields();
+    });
+    addBlock();
+    vendorDatalist();
+  }).withFailureHandler(function(e){ toast('Load failed: '+e.message,'e'); }).getBootstrap();
+};
+
+function catOptions(){ return buildOptions((CFG.employeeCategories||[]).map(function(c){return c.category;}),'Select category…'); }
+// Vendor names are now used by a custom autocomplete (substring + ranked),
+// not an HTML <datalist>. The datalist call is kept for back-compat in case
+// anything still references it, but it's a no-op now.
+function vendorDatalist(){ /* no-op — superseded by vendorAC */ }
+
+// ── Custom autocomplete for vendor inputs ────────────────────────────
+// Substring match against vendor names (anywhere in the string, not just
+// the start), with smart ranking:
+//   100  exact match
+//    80  query at the start of any word
+//    60  query anywhere
+// Highlights the matched chunk in bold yellow so it's obvious why a result appeared.
+function _normForAC(s){
+  return String(s||'').toLowerCase()
+    .replace(/[^a-z0-9\s]/g,' ')   // strip punctuation
+    .replace(/\s+/g,' ').trim();
+}
+function vendorACSearch(query){
+  var q = _normForAC(query);
+  if (!q || q.length < 2) return [];
+  var list = CFG.vendors || [];
+  var out = [];
+  for (var i=0; i<list.length; i++){
+    var name = list[i].name || ''; var n = _normForAC(name);
+    if (!n) continue;
+    var score = 0;
+    if (n === q)                                                score = 100;
+    else if (n.indexOf(q) === 0)                                score = 90;
+    else if ((' '+n).indexOf(' '+q) !== -1)                     score = 80;   // at start of any word
+    else if (n.indexOf(q) !== -1)                               score = 60;   // anywhere
+    if (score > 0) out.push({name:name, score:score});
+  }
+  out.sort(function(a,b){
+    if (b.score !== a.score) return b.score - a.score;
+    return a.name.localeCompare(b.name);
+  });
+  return out.slice(0, 12);
+}
+function _highlight(name, q){
+  if (!q) return esc(name);
+  var nq = _normForAC(q);
+  var nn = _normForAC(name);
+  var idx = nn.indexOf(nq);
+  if (idx < 0) return esc(name);
+  // Map normalized index back to original string approximately:
+  // since _normForAC only lowercases + collapses punctuation/spaces, the
+  // best practical approach is to do a case-insensitive search on the
+  // ORIGINAL string for the original query, falling back to plain esc.
+  var rx;
+  try { rx = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'); }
+  catch(e){ return esc(name); }
+  return esc(name).replace(rx, '<mark>$1</mark>');
+}
+function vendorAC(i){
+  var inp = $('vn'+i); var box = $('vn'+i+'-ac');
+  if (!inp || !box) return;
+  var q = inp.value.trim();
+  if (q.length < 2){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  var matches = vendorACSearch(q);
+  if (!matches.length){
+    box.innerHTML = '<div class="vac__empty">No existing vendor matches — typing creates a new one.</div>';
+    box.style.display = 'block';
+    return;
+  }
+  box.innerHTML = matches.map(function(m){
+    var safeName = m.name.replace(/'/g,"\\'");
+    return '<div class="vac__item" onmousedown="vendorACPick(\''+i+'\',\''+safeName+'\')">' +
+             _highlight(m.name, q) +
+           '</div>';
+  }).join('');
+  box.style.display = 'block';
+}
+function vendorACPick(i, name){
+  var inp = $('vn'+i); if (inp) inp.value = name;
+  vendorACHide(i);
+}
+function vendorACHide(i){
+  // delay so a click on a list item registers first
+  setTimeout(function(){ var box = $('vn'+i+'-ac'); if (box) box.style.display = 'none'; }, 150);
+}
+function projOptions(){ return '<option value="">None / General</option>' + buildOptions(CFG.projects||[]); }
+function modeOptions(){ return buildOptions(CFG.paymentModes||['Cash']); }
+
+// Build the "Paid by" dropdown for the currently-selected employee.
+// Float accounts assigned to this employee appear as a third option, labelled
+// "Pay from Balance" for the employee-facing UI (kept generic on purpose;
+// internally the value remains float:FL-## so the backend logic is unchanged).
+function paidByOptionsFor(employeeName){
+  var html = '<option value="Employee">Employee (reimburse me)</option>' +
+             '<option value="Company">Company</option>';
+  if (!employeeName) return html;
+  var floats = (CFG.accounts || []).filter(function(a){
+    return a.side === 'Float' && (a.owner || '').toLowerCase() === employeeName.toLowerCase();
+  });
+  floats.forEach(function(f){
+    html += '<option value="float:'+esc(f.id)+'">Pay from Balance</option>';
+  });
+  return html;
+}
+// When employee changes, rebuild every paid-by dropdown.
+function refreshPaidBySelects(){
+  var emp = $('emp').value || '';
+  document.querySelectorAll('select[id^="pb"]').forEach(function(sel){
+    var cur = sel.value;
+    sel.innerHTML = paidByOptionsFor(emp);
+    // Try to preserve previous selection if still valid
+    var opts = sel.querySelectorAll('option');
+    for (var i=0;i<opts.length;i++){ if (opts[i].value === cur){ sel.value = cur; break; } }
+  });
+}
+
+// ── Tab switcher (Submit Expense ↔ Request Advance ↔ Project Costs) ──────────
+function efShowTab(key){
+  var expActive = (key === 'exp');
+  var advActive = (key === 'adv');
+  var pcActive = (key === 'pc');
+  $('ef-pane-exp').style.display = expActive ? '' : 'none';
+  $('ef-pane-adv').style.display = advActive ? '' : 'none';
+  $('ef-pane-pc').style.display = pcActive ? '' : 'none';
+  $('ef-tab-exp').classList.toggle('is-active', expActive);
+  $('ef-tab-adv').classList.toggle('is-active', advActive);
+  $('ef-tab-pc').classList.toggle('is-active', pcActive);
+  // Refresh advance history when the tab is opened (in case a request was
+  // just approved/rejected elsewhere while this page was open).
+  if (advActive){
+    var emp = ($('emp').value || '').trim();
+    if (emp) loadAdvanceHistory(emp);
+  }
+  // Populate project dropdown when PC tab is opened
+  if (pcActive && (!$('pc-project')||!$('pc-project').innerHTML||$('pc-project').innerHTML==='<option value="">Select project…</option>')){
+    var projSel = $('pc-project');
+    if (projSel && CFG.projects){
+      projSel.innerHTML = '<option value="">Select project…</option>';
+      (CFG.projects||[]).forEach(function(p){
+        var o = document.createElement('option');
+        o.value = o.textContent = p;
+        projSel.appendChild(o);
+      });
+    }
+  }
+}
+
+// ── Advance request UI (Tier 3.3, tab-scoped after Tier 5 UI split) ──
+function onEmpChange(){
+  refreshPaidBySelects();
+  var emp = ($('emp').value || '').trim();
+  // Toggle the advance tab's enable-state and hint text based on employee pick.
+  var btn = $('adv-submit-btn');
+  var hint = $('adv-hint');
+  if (emp){
+    if (btn)  btn.disabled = false;
+    if (hint) hint.textContent = 'Optional';
+    loadAdvanceHistory(emp);
+  } else {
+    if (btn)  btn.disabled = true;
+    if (hint) hint.textContent = 'Pick your name above to enable';
+    // Clear history — belongs to the previous employee
+    var wrap = $('adv-recent-wrap'); if (wrap) wrap.style.display = 'none';
+    var host = $('adv-recent');      if (host) host.innerHTML = '';
+  }
+}
+
+function loadAdvanceHistory(emp){
+  var wrap = $('adv-recent-wrap');
+  var host = $('adv-recent');
+  wrap.style.display = 'none';
+  host.innerHTML = '';
+  google.script.run
+    .withSuccessHandler(function(res){
+      if (!res || !res.ok){ return; }
+      var rows = (res.data && res.data.rows) || [];
+      if (!rows.length){ return; }
+      var top5 = rows.slice(0, 5);
+      host.innerHTML = top5.map(function(r){
+        var color = r.status === 'Pending'  ? '#F59E0B'
+                  : r.status === 'Approved' ? '#15803D'
+                  : r.status === 'Rejected' ? '#DC2626'
+                  :                            '#6B7280';
+        var reasonBit = r.reason ? '<span class="small muted"> · ' + esc(r.reason) + '</span>' : '';
+        var cancelLink = (r.status === 'Pending')
+          ? ' <a href="#" class="small" onclick="cancelAdvance(\''+esc(r.id)+'\'); return false;">cancel</a>'
+          : '';
+        return '<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #F1F5F9">' +
+                 '<div><strong>₹' + Number(r.amount).toLocaleString('en-IN') + '</strong>' + reasonBit + '</div>' +
+                 '<div><span style="color:'+color+';font-weight:600">' + esc(r.status) + '</span>' + cancelLink + '</div>' +
+               '</div>';
+      }).join('');
+      wrap.style.display = '';
+    })
+    .withFailureHandler(function(){ /* silent — history is a bonus */ })
+    .listAdvanceRequests({ employee: emp, limit: 10 });
+}
+
+function submitAdvance(){
+  var emp = ($('emp').value || '').trim();
+  var amt = parseFloat($('adv-amt').value || 0);
+  var reason = ($('adv-reason').value || '').trim();
+  if (!emp){ toast('Pick your name first','e'); return; }
+  if (!(amt > 0)){ toast('Enter an amount greater than zero','e'); return; }
+  var btn = $('adv-submit-btn');
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  google.script.run
+    .withSuccessHandler(function(r){
+      btn.disabled = false; btn.textContent = 'Submit request';
+      if (r && r.success){
+        toast('Request submitted (' + r.requestId + ')', 's');
+        $('adv-amt').value = '';
+        $('adv-reason').value = '';
+        loadAdvanceHistory(emp);
+      } else {
+        toast(r && r.message ? r.message : 'Failed', 'e');
+      }
+    })
+    .withFailureHandler(function(e){
+      btn.disabled = false; btn.textContent = 'Submit request';
+      toast('Error: ' + e.message, 'e');
+    })
+    .submitAdvanceRequest({ employee: emp, amount: amt, reason: reason });
+}
+
+function cancelAdvance(id){
+  if (!confirm('Cancel request ' + id + '?')) return;
+  google.script.run
+    .withSuccessHandler(function(r){
+      if (r && r.success){
+        toast(r.message || 'Cancelled', 's');
+        var emp = ($('emp').value || '').trim();
+        if (emp) loadAdvanceHistory(emp);
+      } else {
+        toast(r && r.message ? r.message : 'Failed', 'e');
+      }
+    })
+    .withFailureHandler(function(e){ toast('Error: ' + e.message, 'e'); })
+    .cancelAdvanceRequest({ requestId: id });
+}
+
+function addBlock(){
+  bc++; var i=bc; var d=document.createElement('div'); d.className='block'; d.id='b'+i;
+  d.innerHTML =
+    '<div class="block__head"><span class="block__num">'+i+'</span>Expense '+i+'</div>'+
+    (i>1?'<button type="button" class="block__rm" onclick="rmBlock('+i+')">✕</button>':'')+
+    '<div class="grid-2">'+
+      '<div class="field"><label>Date</label><input class="input" type="date" id="d'+i+'" value="'+todayISO()+'"></div>'+
+      '<div class="field"><label>Amount (₹) *</label><input class="input" type="number" id="a'+i+'" min="0" step="0.01" inputmode="decimal" oninput="updTot()"></div>'+
+    '</div>'+
+    '<div class="grid-2">'+
+      '<div class="field"><label>Category</label><select class="select" id="c'+i+'">'+catOptions()+'</select></div>'+
+      '<div class="field"><label>Location</label><select class="select" id="l'+i+'">'+buildOptions(LOCATIONS,'Select…')+'</select></div>'+
+    '</div>'+
+    '<div class="grid-2">'+
+      '<div class="field"><label>Project (optional)</label><select class="select" id="pr'+i+'">'+projOptions()+'</select></div>'+
+      '<div class="field" style="position:relative;"><label>Vendor (optional)</label>'+
+        '<input class="input" id="vn'+i+'" autocomplete="off" placeholder="Type any part of the name" oninput="vendorAC(\''+i+'\')" onblur="vendorACHide(\''+i+'\')">'+
+        '<div id="vn'+i+'-ac" class="vac" style="display:none;"></div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="field"><label>Description *</label><input class="input" type="text" id="de'+i+'" maxlength="120" placeholder="What was this for?"></div>'+
+    '<div class="field"><label>Notes (optional)</label><textarea class="textarea" id="no'+i+'" placeholder="Reference, other details"></textarea></div>'+
+    '<div class="grid-2">'+
+      '<div class="field"><label>Payment mode</label><select class="select" id="pm'+i+'">'+modeOptions()+'</select></div>'+
+      '<div class="field"><label>Paid by</label><select class="select" id="pb'+i+'">'+paidByOptionsFor($('emp').value||'')+'</select></div>'+
+    '</div>'+
+    '<div class="field"><label>Proof (jpg/png/pdf · max 5MB · optional)</label>'+
+      '<label class="file-row" for="pf'+i+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15.17 7l-6.58 6.59a2 2 0 102.82 2.82l6.42-6.58a4 4 0 00-5.66-5.66l-6.41 6.59a6 6 0 108.48 8.48L20.5 13"/></svg><span id="pfn'+i+'">Attach receipt</span></label>'+
+      '<input type="file" id="pf'+i+'" accept=".jpg,.jpeg,.png,.pdf" class="visually-hidden" onchange="onFile('+i+',this)"></div>';
+  $('blocks').appendChild(d);
+}
+function rmBlock(i){ var el=$('b'+i); if(el){ el.remove(); updTot(); } }
+function updTot(){ var t=0; document.querySelectorAll('input[id^="a"]').forEach(function(el){ if(/^a\d+$/.test(el.id)) t+=parseFloat(el.value)||0; }); setText('rtot','₹'+fmt(t)); }
+function onFile(i,inp){ var f=inp.files[0]; if(!f) return; if(f.size>5*1024*1024){ toast('Max 5MB','e'); inp.value=''; return; } setText('pfn'+i,'📎 '+f.name); }
+
+function collect(){
+  var emp=$('emp').value; if(!emp){ toast('Select your name','e'); return null; }
+  var exps=[], ok=true;
+  var paidFromAccount = '';   // set when ANY expense in the batch is paid from a float
+  document.querySelectorAll('.block').forEach(function(b){
+    var i=b.id.replace('b','');
+    var amt=parseFloat(($('a'+i)||{}).value); var desc=(($('de'+i)||{}).value||'').trim();
+    if(!amt||amt<=0){ toast('Enter amount for Expense '+i,'e'); ok=false; return; }
+    if(!desc){ toast('Enter description for Expense '+i,'e'); ok=false; return; }
+    var cat=($('c'+i)||{}).value||'';
+    if(!cat){ toast('Select a category for Expense '+i,'e'); ok=false; return; }
+    var pm=($('pm'+i)||{}).value||'';
+    if(!pm){ toast('Select payment mode for Expense '+i,'e'); ok=false; return; }
+    var notesVal=(($('no'+i)||{}).value||'').trim();
+    if(/\(Specify\)\s*$/.test(cat) && !notesVal){
+      toast('Notes are required for Expense '+i+' when picking "'+cat+'"','e'); ok=false; return;
+    }
+    // Decode paid-by value. Possible: 'Employee' | 'Company' | 'float:FL-xx'
+    var pbRaw = ($('pb'+i)||{}).value || 'Employee';
+    var paidBy = pbRaw;
+    if (pbRaw.indexOf('float:') === 0){
+      paidBy = 'Employee';   // backend treats it as not-Company; the paidFromAccount drives the float logic
+      paidFromAccount = pbRaw.replace('float:','');
+    }
+    var vName=(($('vn'+i)||{}).value||'').trim();
+    exps.push({ date:($('d'+i)||{}).value||'', amount:amt, category:cat,
+      location:($('l'+i)||{}).value||'', project:($('pr'+i)||{}).value||'', description:desc,
+      partyId:'', party:vName, notes:notesVal,
+      paymentMode:pm, paidBy:paidBy, proofInput:$('pf'+i) });
+  });
+  if(!ok||!exps.length) return null;
+  return {employeeName:emp, expenses:exps, paidFromAccount:paidFromAccount};
+}
+
+function doSubmit(){
+  var data=collect(); if(!data) return;
+  var btn=$('sub-btn'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Submitting…';
+  readFiles(data.expenses, function(wd){
+    google.script.run.withSuccessHandler(function(r){
+      if(r&&r.success){
+        showSubmitSummary(data, wd, r);
+      } else {
+        showSubmitError(r&&r.message||'Submission failed (no error details returned). Please try again or contact support.');
+        btn.disabled=false; btn.textContent='Submit Expenses';
+      }
+    }).withFailureHandler(function(e){
+      showSubmitError('Submission failed: '+e.message+'. Please try again or contact support.');
+      btn.disabled=false; btn.textContent='Submit Expenses';
+    })
+    .submitEmployeeExpense({employeeName:data.employeeName, expenses:wd, paidFromAccount:data.paidFromAccount});
+  });
+}
+
+function showSubmitError(message){
+  var html =
+    '<div class="err-back" onclick="event.stopPropagation();"></div>' +
+    '<div class="err-panel">' +
+      '<div class="err-head">' +
+        '<div class="err-icon">!</div>' +
+        '<div>' +
+          '<div class="err-title">Submission failed</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="err-body">' +
+        '<p style="margin:0 0 12px">'+esc(message)+'</p>' +
+        '<p style="margin:0;font-size:12px;color:#666">Your expenses have NOT been recorded. Please try again. If the problem persists, contact your manager.</p>' +
+      '</div>' +
+      '<div class="err-actions">' +
+        '<button class="btn" onclick="closeErrorModal()">Dismiss</button>' +
+      '</div>' +
+    '</div>';
+  var wrap = document.createElement('div');
+  wrap.className = 'err-wrap';
+  wrap.id = 'submit-error';
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap);
+}
+
+function closeErrorModal(){
+  var el = $('submit-error');
+  if (el) el.remove();
+}
+
+// ── Post-submit summary screen ────────────────────────────────
+// Shows what was recorded and lets the user add another batch (form resets
+// but employee stays selected) OR close the tab.
+function showSubmitSummary(data, wd, res){
+  var total = 0;
+  var rows = (data.expenses || []).map(function(e, i){
+    total += e.amount;
+    var proj = e.project ? ' <span class="ss-meta">'+esc(e.project)+'</span>' : '';
+    return '<tr>' +
+      '<td>'+ (i+1) +'</td>' +
+      '<td>'+ esc(e.category) + proj +'</td>' +
+      '<td>'+ esc(e.description) +'</td>' +
+      '<td class="num">₹ '+ fmt(e.amount) +'</td>' +
+    '</tr>';
+  }).join('');
+
+  var floatMsg = '';
+  if (res.floatBalance !== undefined){
+    floatMsg = '<div class="ss-float">Remaining site balance: <strong>₹ ' + fmt(res.floatBalance) + '</strong></div>';
+  }
+
+  var html =
+    '<div class="ss-back" onclick="event.stopPropagation();"></div>' +
+    '<div class="ss-panel">' +
+      '<div class="ss-head">' +
+        '<div class="ss-check">✓</div>' +
+        '<div>' +
+          '<div class="ss-title">Submitted successfully</div>' +
+          '<div class="ss-sub">'+ res.count +' expense(s) recorded for ' + esc(data.employeeName) + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="ss-body">' +
+        '<table class="ss-table"><thead><tr><th>#</th><th>Category</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>'+ rows +'</tbody>' +
+        '<tfoot><tr><td colspan="3" class="num"><strong>Total</strong></td><td class="num"><strong>₹ '+ fmt(total) +'</strong></td></tr></tfoot></table>' +
+        floatMsg +
+      '</div>' +
+      '<div class="ss-actions">' +
+        '<button class="btn btn--ghost" onclick="closeSummaryAndClose()">Close window</button>' +
+        '<button class="btn" onclick="closeSummaryAndAddMore()">+ Add another expense</button>' +
+      '</div>' +
+    '</div>';
+
+  var wrap = document.createElement('div');
+  wrap.className = 'ss-wrap';
+  wrap.id = 'submit-summary';
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap);
+}
+
+function closeSummaryAndAddMore(){
+  // Reload gets us a fresh, empty form. The employee selection is lost but
+  // that's the safest option (avoids stale float balances, stale open state).
+  location.reload();
+}
+function closeSummaryAndClose(){
+  var el = $('submit-summary');
+  if (el) el.remove();
+  // Best effort — some browsers block window.close on tabs they didn't open.
+  try { window.close(); } catch(e){}
+  document.body.innerHTML = '<div style="padding:60px 20px; text-align:center; font-family:var(--f-body,sans-serif); color:#666;">' +
+    '<div style="font-size:44px; color:#22c55e;">✓</div>' +
+    '<h2 style="margin:16px 0 8px;">Submitted successfully.</h2>' +
+    '<p>You can close this tab.</p>' +
+  '</div>';
+}
+
+function readFiles(arr, cb){
+  var res=arr.map(function(e){ return Object.assign({},e,{proofData:null,proofInput:undefined}); });
+  var pend=0;
+  arr.forEach(function(e,i){
+    if(!e.proofInput||!e.proofInput.files||!e.proofInput.files[0]) return;
+    pend++; var f=e.proofInput.files[0], r=new FileReader();
+    r.onload=function(ev){ res[i].proofData={data:ev.target.result.split(',')[1],mimeType:f.type,name:f.name}; if(--pend===0) cb(res); };
+    r.readAsDataURL(f);
+  });
+  if(pend===0) cb(res);
+}
+
+// ── Project Costs functions (Batch 10 — category-based) ─────
+var PC_CATS = [];
+var PC_CAT_MAP = {};
+
+function pcLoadCategories(cb){
+  google.script.run
+    .withSuccessHandler(function(res){
+      PC_CATS = (res && res.categories) || [];
+      PC_CAT_MAP = {};
+      PC_CATS.forEach(function(c){ PC_CAT_MAP[c.subcategory] = c.category; });
+      var sel = $('pc-subcat');
+      if(sel){
+        sel.innerHTML = '<option value="">Select subcategory…</option>' +
+          PC_CATS.map(function(c){ return '<option value="'+esc(c.subcategory)+'">'+esc(c.subcategory)+'</option>'; }).join('');
+      }
+      if(cb) cb();
+    })
+    .withFailureHandler(function(err){ console.error('Load categories failed:', err); if(cb) cb(); })
+    .getCategoriesForProjectCosts();
+}
+
+function pcUpdateCategory(){
+  var sub = $('pc-subcat').value;
+  $('pc-cat').value = PC_CAT_MAP[sub] || '';
+}
+
+var PC_GST_OPTS = '<option value="0">0% — No GST</option>' +
+                  '<option value="5">5%</option>' +
+                  '<option value="12">12%</option>' +
+                  '<option value="18">18%</option>' +
+                  '<option value="28">28%</option>';
+
+function pcUpdateFields(){
+  var type = $('pc-type').value;
+  var html = '';
+  if(type === 'Material'){
+    html = '<div class="field"><label>Material Name *</label><input class="input pc-field" data-field="materialName" type="text" placeholder="e.g. Cement"></div>' +
+           '<div style="display:flex; gap:12px;"><div class="field" style="flex:1"><label>Quantity *</label><input class="input pc-field" data-field="quantity" type="number" min="0" step=".01" oninput="pcCalcTotal()" placeholder="50"></div>' +
+           '<div class="field" style="flex:1"><label>Unit *</label><input class="input pc-field" data-field="unit" type="text" placeholder="Bag, Kg"></div>' +
+           '<div class="field" style="flex:1"><label>Rate/Unit (₹) *</label><input class="input pc-field" data-field="rate" type="number" min="0" step=".01" oninput="pcCalcTotal()" placeholder="600"></div></div>' +
+           '<div class="field"><label>Amount Ex-GST (auto)</label><input class="input" type="text" id="pc-base" readonly style="background:#f1f5f9;"></div>' +
+           '<div style="display:flex; gap:12px;">' +
+             '<div class="field" style="flex:1"><label>GST %</label><select class="select pc-field" data-field="gst_rate" id="pc-gst" onchange="pcCalcTotal()">'+PC_GST_OPTS+'</select></div>' +
+             '<div class="field" style="flex:1"><label>Total Inc-GST (auto)</label><input class="input" type="text" id="pc-total" readonly style="background:#f1f5f9; font-weight:600;"></div>' +
+           '</div>' +
+           '<div class="field"><label>Description (optional)</label><input class="input pc-field" data-field="description" type="text" placeholder="Optional details"></div>' +
+           '<div class="field"><label>Notes (optional)</label><input class="input pc-field" data-field="notes" type="text"></div>';
+  } else {
+    html = '<div class="field"><label>Description *</label><input class="input pc-field" data-field="description" type="text" placeholder="What is this cost for?"></div>' +
+           '<div style="display:flex; gap:12px;">' +
+             '<div class="field" style="flex:1"><label>Amount Ex-GST (₹) *</label><input class="input pc-field" data-field="amount" type="number" min="0" step=".01" oninput="pcCalcTotal()" placeholder="5000"></div>' +
+             '<div class="field" style="flex:1"><label>GST %</label><select class="select pc-field" data-field="gst_rate" id="pc-gst" onchange="pcCalcTotal()">'+PC_GST_OPTS+'</select></div>' +
+             '<div class="field" style="flex:1"><label>Total Inc-GST (auto)</label><input class="input" type="text" id="pc-total" readonly style="background:#f1f5f9; font-weight:600;"></div>' +
+           '</div>' +
+           '<div class="field"><label>Notes (optional)</label><input class="input pc-field" data-field="notes" type="text"></div>';
+  }
+  $('pc-fields').innerHTML = html;
+}
+
+function pcCalcTotal(){
+  var type = $('pc-type').value;
+  var base = 0;
+  if(type === 'Material'){
+    var qty = parseFloat((document.querySelector('.pc-field[data-field="quantity"]')||{}).value) || 0;
+    var rate = parseFloat((document.querySelector('.pc-field[data-field="rate"]')||{}).value) || 0;
+    base = qty * rate;
+    var baseEl = $('pc-base');
+    if(baseEl) baseEl.value = '₹ ' + base.toFixed(2);
+  } else {
+    base = parseFloat((document.querySelector('.pc-field[data-field="amount"]')||{}).value) || 0;
+  }
+  var gstPct = parseFloat(($('pc-gst')||{}).value) || 0;
+  var total = base * (1 + gstPct/100);
+  var totalEl = $('pc-total');
+  if(totalEl) totalEl.value = '₹ ' + total.toFixed(2);
+}
+
+function _pcReadFields(){
+  var data = {};
+  document.querySelectorAll('#pc-fields .pc-field').forEach(function(f){
+    var field = f.getAttribute('data-field');
+    if(field){
+      if(f.type === 'checkbox') data[field] = f.checked;
+      else data[field] = f.value || '';
+    }
+  });
+  return data;
+}
+
+function pcSubmitSingle(){
+  try {
+    var proj = ($('pc-project')||{}).value;
+    var date = ($('pc-date')||{}).value;
+    var type = ($('pc-type')||{}).value;
+    var subcat = ($('pc-subcat')||{}).value;
+    var category = ($('pc-cat')||{}).value;
+
+    if(!proj){ toast('Select project','e'); return; }
+    if(!date){ toast('Select date','e'); return; }
+    if(!subcat){ toast('Select subcategory','e'); return; }
+
+    var data = _pcReadFields();
+    data.date = date;
+    data.subcategory = subcat;
+    data.category = category;
+
+    if(type === 'Material'){
+      if(!data.materialName){ toast('Material name required','e'); return; }
+      var qty = parseFloat(data.quantity) || 0;
+      var rate = parseFloat(data.rate) || 0;
+      if(qty <= 0){ toast('Quantity must be > 0','e'); return; }
+      if(!data.unit){ toast('Unit required','e'); return; }
+      if(rate <= 0){ toast('Rate must be > 0','e'); return; }
+      data.quantity = qty;
+      data.rate = rate;
+    } else {
+      if(!data.description){ toast('Description required','e'); return; }
+      var amt = parseFloat(data.amount) || 0;
+      if(amt <= 0){ toast('Amount must be > 0','e'); return; }
+      data.amount = amt;
+    }
+
+    var entry = {project:proj, entry_type:type, entry_date:date, data:data};
+    var btn = $('pc-submit-single-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Submitting…';
+
+    google.script.run
+      .withSuccessHandler(function(r){
+        btn.disabled = false;
+        btn.innerHTML = 'Submit Project Cost';
+        if(r && r.success){
+          toast('Project cost recorded','s');
+          // Reset form
+          ['pc-subcat','pc-cat'].forEach(function(id){ if($(id)) $(id).value=''; });
+          pcUpdateFields();
+        } else {
+          toast(r && r.message ? r.message : 'Submission failed','e');
+        }
+      })
+      .withFailureHandler(function(err){
+        btn.disabled = false;
+        btn.innerHTML = 'Submit Project Cost';
+        toast('Error: ' + err.message, 'e');
+      })
+      .submitProjectCosts([entry]);
+  } catch(e){
+    console.error('pcSubmitSingle error:', e);
+    toast('Error: ' + e.message, 'e');
+  }
+}
+</script>
+</body>
+</html>

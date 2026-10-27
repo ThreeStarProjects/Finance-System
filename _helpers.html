@@ -1,0 +1,205 @@
+<script>
+/* ============================================================
+   3 Star Projects — shared client helpers
+   Loaded by every page via <?!= include('_helpers') ?>
+   ============================================================ */
+
+// ── Toast ───────────────────────────────────────────────────
+function toast(msg, type){
+  var t = document.getElementById('toast');
+  if (!t){ t = document.createElement('div'); t.id='toast'; t.className='toast';
+    t.setAttribute('role','status'); document.body.appendChild(t); }
+  t.textContent = msg;
+  t.className = 'toast ' + (type==='s'?'toast--s':type==='e'?'toast--e':'') + ' show';
+  clearTimeout(window.__toastT);
+  window.__toastT = setTimeout(function(){ t.className='toast'; }, 3500);
+}
+
+// ── Formatting (Indian) ─────────────────────────────────────
+function fmt(n){ return (parseFloat(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtInt(n){ return (parseInt(n)||0).toLocaleString('en-IN'); }
+function shortINR(v){ var n=parseFloat(v)||0;
+  if (Math.abs(n)>=1e7) return '₹'+(n/1e7).toFixed(1)+'Cr';
+  if (Math.abs(n)>=1e5) return '₹'+(n/1e5).toFixed(1)+'L';
+  if (Math.abs(n)>=1e3) return '₹'+(n/1e3).toFixed(0)+'k';
+  return '₹'+n.toFixed(0); }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function todayISO(){ return new Date().toISOString().split('T')[0]; }
+function fmtDate(d){
+  if (!d || d==='') return '—'; var dt;
+  if (d instanceof Date) dt=d; else if (typeof d==='number') dt=new Date((d-25569)*86400*1000); else dt=new Date(d);
+  if (isNaN(dt.getTime())) return String(d).substring(0,10);
+  return dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+}
+// ── Salary helpers ──────────────────────────────────────────
+function getCurrentMonthLabel(){
+  var d = new Date();
+  var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[d.getMonth()] + '-' + String(d.getFullYear()).slice(-2);
+}
+function daysInMonthLabel(label){
+  var mm = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+  var parts = String(label||'').split('-');
+  var m = mm[parts[0]];
+  var y = 2000 + parseInt(parts[1], 10);
+  if (m === undefined || isNaN(y)) return 30;
+  var d = new Date(y, m+1, 0);
+  return d.getDate();
+}
+
+// ── DOM helpers ─────────────────────────────────────────────
+function $(id){ return document.getElementById(id); }
+function setText(id,v){ var el=$(id); if (el) el.textContent=v; }
+function buildOptions(arr, placeholder){
+  var html = placeholder ? '<option value="">'+esc(placeholder)+'</option>' : '';
+  (arr||[]).forEach(function(v){ html += '<option value="'+esc(v)+'">'+esc(v)+'</option>'; });
+  return html;
+}
+// Envelope unwrap for dashboard-style endpoints
+function callServer(method, args, cb){
+  // args may be: an array of positional args [a, b], null/undefined, or a single value.
+  // Spread arrays so backend functions receive their real parameters.
+  var argList;
+  if (Array.isArray(args)) argList = args;
+  else if (args === null || args === undefined) argList = [];
+  else argList = [args];
+  var runner = google.script.run
+    .withSuccessHandler(function(ret){
+      // Pass the backend's raw return value straight through.
+      // - dashboard reads return {ok, data, error}
+      // - writes return {success, message, ...}
+      // - list reads return arrays/strings/numbers
+      cb(ret);
+    })
+    .withFailureHandler(function(e){
+      var msg = (e && e.message) || String(e);
+      // Give callers a shape that satisfies both ok-style and success-style checks.
+      cb({ ok:false, success:false, data:null, error:msg, message:msg });
+    });
+  runner[method].apply(runner, argList);
+}
+// ── Navigation lives only on the Home shell. Module pages don't switch. ──
+function _currentPage(){
+  var m = /[?&]page=([^&]+)/.exec(location.search || '');
+  return m ? decodeURIComponent(m[1]) : 'home';
+}
+
+// Embedded mode: when a module is shown inside the single-page shell (?embed=1),
+// hide its own topbar/nav so only the shell chrome shows.
+var EMBED = /[?&]embed=1/.test(location.search || '');
+
+// Rewrite every internal ?page= link to an absolute URL so it works from inside
+// the iframe sandbox. In the shell pane (embedded) links stay in the pane;
+// standalone they navigate the top window.
+function _fixNavLinks(baseUrl){
+  if (!baseUrl) return;
+  var links = document.querySelectorAll('a[href^="?page="]');
+  for (var i=0;i<links.length;i++){
+    var a = links[i];
+    if (a.getAttribute('data-fixed')) continue;
+    var href = a.getAttribute('href');
+    a.href = baseUrl + href + (EMBED ? '&embed=1' : '');
+    a.target = EMBED ? '_self' : '_top';
+    a.setAttribute('data-fixed','1');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  if (EMBED){ var tb = document.querySelector('.topbar'); if (tb) tb.style.display = 'none'; }
+  try { google.script.run.withSuccessHandler(_fixNavLinks).getAppUrl(); } catch(e){}
+});
+
+// ============================================================
+// Extended helpers (Batch 2): debounce, modal, table sorter
+// ============================================================
+
+// Debounce a function (delay in ms)
+function debounce(fn, wait){
+  var t = null;
+  return function(){
+    var ctx = this, args = arguments;
+    clearTimeout(t);
+    t = setTimeout(function(){ fn.apply(ctx, args); }, wait||300);
+  };
+}
+
+// Modal helper — uses a single global <div id="modal"> defined in Home.
+// Usage: openModal('<h2>Title</h2><p>Body</p>', { onClose: fn })
+function openModal(html, opts){
+  opts = opts || {};
+  var bg = $('modal');   if (!bg) return;
+  var body = $('modal-body'); if (!body) return;
+  body.innerHTML = html;
+  bg.classList.add('is-open');
+  bg.dataset.onClose = '';
+  if (opts.onClose) bg.__onClose = opts.onClose; else bg.__onClose = null;
+}
+function closeModal(){
+  var bg = $('modal'); if (!bg) return;
+  bg.classList.remove('is-open');
+  if (typeof bg.__onClose === 'function') { try { bg.__onClose(); } catch(e){} bg.__onClose = null; }
+}
+
+// Sort a column header click — caller passes the field key.
+// Sets visual indicator on the <th data-sort> elements.
+function setSortIndicators(scopeEl, sortBy, sortDir){
+  var hdrs = (scopeEl || document).querySelectorAll('th[data-sort]');
+  for (var i=0;i<hdrs.length;i++){
+    var h = hdrs[i], k = h.getAttribute('data-sort');
+    h.classList.remove('th-asc','th-desc');
+    if (k === sortBy) h.classList.add(sortDir === 'asc' ? 'th-asc' : 'th-desc');
+  }
+}
+
+// Simple show-tab helper for sub-tabs inside a section.
+// Marks the .tabnav__btn with matching data-tab as active and shows the matching .tabpane.
+function showSubTab(rootEl, key){
+  var btns = rootEl.querySelectorAll('.tabnav__btn');
+  var panes = rootEl.querySelectorAll('.tabpane');
+  for (var i=0;i<btns.length;i++) btns[i].classList.toggle('is-active', btns[i].getAttribute('data-tab') === key);
+  for (var j=0;j<panes.length;j++) panes[j].classList.toggle('is-active', panes[j].getAttribute('data-tab') === key);
+}
+
+// Format an ISO date or Date object to dd-Mmm-yy for table display
+function fmtShortDate(v){
+  var d = (v instanceof Date) ? v : (v ? new Date(v) : null);
+  if (!d || isNaN(d.getTime())) return '';
+  var MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return ('0'+d.getDate()).slice(-2) + '-' + MN[d.getMonth()] + '-' + String(d.getFullYear()).slice(2);
+}
+
+// Count-up animation for KPI numbers — respects reduced-motion.
+// Pass element + target string (e.g. "₹ 1,30,27,021") and it animates
+// from 0 to the parsed number while preserving the prefix.
+function animateKpiNumber(el, finalText, duration){
+  if (!el) return;
+  el.classList.add('animate-in');
+  // If user prefers reduced motion, just set text.
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+    el.textContent = finalText;
+    return;
+  }
+  // Extract the number portion. Suffix may be k, L, or Cr.
+  var m = String(finalText).match(/(.*?)([\d,.]+)\s*(Cr|L|k)?\s*$/);
+  if (!m){ el.textContent = finalText; return; }
+  var prefix = m[1] || '', num = parseFloat(m[2].replace(/,/g,'')) || 0, suffix = m[3] || '';
+  if (num === 0){ el.textContent = finalText; return; }
+  var dur = duration || 480;
+  var start = performance.now();
+  function step(now){
+    var t = Math.min(1, (now - start) / dur);
+    var eased = 1 - Math.pow(1 - t, 3);   // easeOutCubic
+    var v = num * eased;
+    el.textContent = prefix + _formatNumber(v, suffix) + suffix;
+    if (t < 1) requestAnimationFrame(step);
+    else el.textContent = finalText;
+  }
+  requestAnimationFrame(step);
+}
+function _formatNumber(v, suffix){
+  // During count-up: L/Cr show 1 decimal, k shows integer, plain shows grouped integer
+  if (suffix === 'L' || suffix === 'Cr') return v.toFixed(1);
+  if (suffix === 'k') return Math.round(v).toString();
+  return Math.round(v).toLocaleString('en-IN');
+}
+</script>

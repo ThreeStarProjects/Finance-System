@@ -787,6 +787,14 @@ function getVendorLedger(vendorId){
         });
       }
     }
+    // Credit notes (vendor returns) — reduce vendor balance.
+    // Lives in BillReturns.gs; defensive guard in case the file is missing.
+    try {
+      if (typeof getBillReturnLedgerEntries === 'function'){
+        var __br = getBillReturnLedgerEntries(vendorId);
+        for (var __k=0; __k<__br.length; __k++) entries.push(__br[__k]);
+      }
+    } catch(__e){ Logger.log('getVendorLedger returns inject: '+__e.message); }
     entries.sort(function(a,b){ return a.sortKey - b.sortKey; });
     var bal = 0;
     entries.forEach(function(e){ bal += e.credit - e.debit; e.balance = _round(bal); delete e.sortKey; });

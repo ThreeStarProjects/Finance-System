@@ -1089,6 +1089,7 @@
     <div class="tabnav" id="ap-tabnav">
       <button class="tabnav__btn is-active" data-tab="newbill" onclick="showSubTab($('panel-ap'),'newbill')">New Bill</button>
       <button class="tabnav__btn"           data-tab="paybill" onclick="showSubTab($('panel-ap'),'paybill')">Vendor Payment Made</button>
+      <button class="tabnav__btn"           data-tab="credit"  onclick="showSubTab($('panel-ap'),'credit')">Credit Note</button>
       <button class="tabnav__btn"           data-tab="bills"   onclick="showSubTab($('panel-ap'),'bills'); apLoadBills();">Bills</button>
       <button class="tabnav__btn"           data-tab="pmade"   onclick="showSubTab($('panel-ap'),'pmade'); apLoadPayments();">Payments Made</button>
       <button class="tabnav__btn"           data-tab="vledger" onclick="showSubTab($('panel-ap'),'vledger')">Vendor Ledger</button>
@@ -1316,6 +1317,20 @@
           </tr></thead>
           <tbody></tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- Credit Note / Vendor Return -->
+    <div class="tabpane" data-tab="credit">
+      <div class="card">
+        <div class="grid-2">
+          <div class="field"><label>Bill ID or Vendor Bill No *</label><input class="input" id="br-ref" placeholder="BILL-#### or vendor's bill number" /></div>
+          <div class="field"><label>Return date</label><input class="input" type="date" id="br-date" /></div>
+        </div>
+        <div class="field"><label>Return amount (₹) *</label><input class="input" type="number" id="br-amt" min="0" step="0.01" /></div>
+        <div class="field"><label>Reason / Notes</label><textarea class="textarea" id="br-notes"></textarea></div>
+        <button class="btn" onclick="submitBillReturn()">Record Credit Note</button>
+        <div class="hint">Credit note will reduce the linked bill's outstanding balance. Accepts either our Bill_ID (BILL-####) or the vendor's own bill number.</div>
       </div>
     </div>
 
@@ -6846,6 +6861,22 @@ function submitReturn(){
     if (!res || !res.success){ toast((res && res.message) || 'Failed','err'); return; }
     toast('Return recorded', 'ok');
     ['r-inv','r-amt','r-notes'].forEach(function(id){ $(id).value=''; });
+  });
+}
+
+function submitBillReturn(){
+  var data = {
+    billRef: $('br-ref').value.trim(),
+    returnDate: $('br-date').value,
+    returnAmount: parseFloat($('br-amt').value)||0,
+    reason: $('br-notes').value
+  };
+  if (!data.billRef){ toast('Bill reference required','err'); return; }
+  if (data.returnAmount <= 0){ toast('Return amount required','err'); return; }
+  callServer('recordBillReturn', [data], function(res){
+    if (!res || !res.success){ toast((res && res.message) || 'Failed','err'); return; }
+    toast('Credit note recorded ('+res.returnId+')', 'ok');
+    ['br-ref','br-amt','br-notes'].forEach(function(id){ $(id).value=''; });
   });
 }
 

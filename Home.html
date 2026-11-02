@@ -1078,7 +1078,7 @@
       <div class="card">
         <div class="grid-2">
           <div class="field"><label>Customer</label><select class="select" id="l-cust" onchange="loadLedger()"></select></div>
-          <div class="field" style="display:flex; align-items:flex-end;"><button class="btn btn--ghost" onclick="loadLedger()">Refresh</button></div>
+          <div class="field" style="display:flex; align-items:flex-end; gap:8px;"><button class="btn btn--ghost" onclick="loadLedger()">Refresh</button><button class="btn btn--ghost" onclick="exportLedgerXlsx('cust')">Export to Excel</button></div>
         </div>
         <div id="l-summary" class="small muted" style="margin-bottom:var(--sp-2);">Select a customer to view ledger.</div>
         <div class="tablewrap" style="max-height:400px;">
@@ -1409,7 +1409,7 @@
       <div class="card">
         <div class="grid-2">
           <div class="field"><label>Vendor</label><select class="select" id="vl-vend" onchange="loadVendorLedger()"></select></div>
-          <div class="field" style="display:flex; align-items:flex-end;"><button class="btn btn--ghost" onclick="loadVendorLedger()">Refresh</button></div>
+          <div class="field" style="display:flex; align-items:flex-end; gap:8px;"><button class="btn btn--ghost" onclick="loadVendorLedger()">Refresh</button><button class="btn btn--ghost" onclick="exportLedgerXlsx('vend')">Export to Excel</button></div>
         </div>
         <div id="vl-summary" class="small muted" style="margin-bottom:var(--sp-2);">Select a vendor to view ledger.</div>
         <div class="tablewrap" style="max-height:400px;">
@@ -6165,6 +6165,110 @@ function loadVendorLedger(){
       (bal > 0 ? '<span class="pill pill--danger">You owe vendor</span>'
        : bal < 0 ? '<span class="pill pill--info">Advance with vendor</span>'
        : '<span class="pill pill--success">Settled</span>');
+  });
+}
+
+// ── Ledger → Excel (.xlsx built in the browser; no server round-trip beyond the ledger fetch) ──
+// Minimal xlsx = a stored (uncompressed) zip of 5 small XML parts.
+var _CRC_T = null;
+function _crc32(u8){
+  if (!_CRC_T){ _CRC_T = []; for (var n=0;n<256;n++){ var c=n; for (var k=0;k<8;k++) c = (c&1) ? (0xEDB88320 ^ (c>>>1)) : (c>>>1); _CRC_T[n]=c>>>0; } }
+  var crc = 0xFFFFFFFF;
+  for (var i=0;i<u8.length;i++) crc = _CRC_T[(crc ^ u8[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function _zipStore(files){            // files: [{name, text}]
+  var enc = new TextEncoder(), parts = [], central = [], offset = 0;
+  files.forEach(function(f){
+    var name = enc.encode(f.name), data = enc.encode(f.text), crc = _crc32(data);
+    var lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0,0x04034b50,true); lh.setUint16(4,20,true); lh.setUint16(6,0x0800,true);
+    lh.setUint32(14,crc,true); lh.setUint32(18,data.length,true); lh.setUint32(22,data.length,true); lh.setUint16(26,name.length,true);
+    var ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true); ch.setUint16(4,20,true); ch.setUint16(6,20,true); ch.setUint16(8,0x0800,true);
+    ch.setUint32(16,crc,true); ch.setUint32(20,data.length,true); ch.setUint32(24,data.length,true);
+    ch.setUint16(28,name.length,true); ch.setUint32(42,offset,true);
+    parts.push(new Uint8Array(lh.buffer), name, data);
+    central.push(new Uint8Array(ch.buffer), name);
+    offset += 30 + name.length + data.length;
+  });
+  var cdSize = 0; central.forEach(function(b){ cdSize += b.length; });
+  var end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0,0x06054b50,true); end.setUint16(8,files.length,true); end.setUint16(10,files.length,true);
+  end.setUint32(12,cdSize,true); end.setUint32(16,offset,true);
+  return new Blob(parts.concat(central, [new Uint8Array(end.buffer)]),
+    {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+// rows: array of arrays (number → numeric cell, else text). boldRows: set of row indexes. widths: [chars].
+function _xlsxBlob(sheetName, rows, boldRows, widths){
+  function x(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function col(i){ var s=''; i++; while(i>0){ var m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=Math.floor((i-1)/26); } return s; }
+  var sd = rows.map(function(r,ri){
+    var st = boldRows[ri] ? ' s="1"' : '';
+    return '<row r="'+(ri+1)+'">' + r.map(function(v,ci){
+      var ref = col(ci)+(ri+1);
+      if (v === null || v === undefined || v === '') return '';
+      return (typeof v === 'number')
+        ? '<c r="'+ref+'"'+st+'><v>'+v+'</v></c>'
+        : '<c r="'+ref+'" t="inlineStr"'+st+'><is><t xml:space="preserve">'+x(v)+'</t></is></c>';
+    }).join('') + '</row>';
+  }).join('');
+  var cols = '<cols>' + widths.map(function(w,i){ return '<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>'; }).join('') + '</cols>';
+  var H = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  var NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+  var RN = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  return _zipStore([
+    {name:'[Content_Types].xml', text: H+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'},
+    {name:'_rels/.rels', text: H+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="'+RN+'/officeDocument" Target="xl/workbook.xml"/></Relationships>'},
+    {name:'xl/workbook.xml', text: H+'<workbook '+NS+' xmlns:r="'+RN+'"><sheets><sheet name="'+x(sheetName.replace(/[\\\/?*\[\]:]/g,' ').substring(0,31))+'" sheetId="1" r:id="rId1"/></sheets></workbook>'},
+    {name:'xl/_rels/workbook.xml.rels', text: H+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="'+RN+'/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="'+RN+'/styles" Target="styles.xml"/></Relationships>'},
+    {name:'xl/styles.xml', text: H+'<styleSheet '+NS+'><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'},
+    {name:'xl/worksheets/sheet1.xml', text: H+'<worksheet '+NS+'>'+cols+'<sheetData>'+sd+'</sheetData></worksheet>'}
+  ]);
+}
+
+// kind: 'cust' (Debit | Credit) or 'vend' (Credit | Debit — same column order as the on-screen table)
+function exportLedgerXlsx(kind){
+  var cust = (kind === 'cust');
+  var sel = $(cust ? 'l-cust' : 'vl-vend');
+  if (!sel.value){ toast('Select a ' + (cust ? 'customer' : 'vendor') + ' first', 'err'); return; }
+  var party = sel.options[sel.selectedIndex].text;
+  callServer(cust ? 'getCustomerLedger' : 'getVendorLedger', [sel.value], function(res){
+    if (!res || res.ok === false){ toast('Ledger load failed: ' + ((res && res.error) || 'no response'), 'err'); return; }
+    var entries = res.entries || [];
+    if (!entries.length){ toast('No ledger entries to export', 'err'); return; }
+    var mainType = cust ? 'Invoice' : 'Bill';
+    var rows = [
+      [(cust ? 'Customer Ledger — ' : 'Vendor Ledger — ') + party],
+      ['Exported', new Date().toISOString().substring(0,10)],
+      [],
+      cust ? ['Date','Type','Reference','Details','Debit','Credit','Balance']
+           : ['Date','Type','Reference','Details','Credit','Debit','Balance']
+    ];
+    entries.forEach(function(e){
+      var d;
+      if (e.type === mainType) d = e.project || '';
+      else if (e.applied && e.applied !== '(advance)') d = (e.type === 'Payment' ? '→ ' : '') + e.applied;
+      else d = e.project ? e.project + ' (direct — not linked)' : (e.type === 'Payment' ? 'Advance — not yet linked' : '');
+      if (e.unapplied > 0.01) d += ' [₹' + e.unapplied + ' unapplied]';
+      if (e.discountNote) d += (d ? ' | ' : '') + e.discountNote;
+      var ref = (e.ref || '') + (e.vendorRef && e.vendorRef !== e.ref ? ' (' + e.vendorRef + ')' : '');
+      var a = cust ? e.debit : e.credit, b = cust ? e.credit : e.debit;
+      rows.push([e.date || '', e.type || '', ref, d, a || '', b || '', e.balance || 0]);
+    });
+    var bal = res.balance || 0;
+    rows.push([]);
+    rows.push(['Closing balance', '', '', cust ? (bal > 0 ? 'Customer owes you' : bal < 0 ? 'Customer paid ahead' : 'Settled')
+                                              : (bal > 0 ? 'You owe vendor' : bal < 0 ? 'Advance with vendor' : 'Settled'),
+               '', '', bal]);
+    var bold = {0:1, 3:1}; bold[rows.length-1] = 1;
+    var blob = _xlsxBlob((cust ? 'Customer' : 'Vendor') + ' Ledger', rows, bold, [12,14,28,46,14,14,16]);
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (cust ? 'Customer' : 'Vendor') + '_Ledger_' + party.replace(/[^\w]+/g,'_').substring(0,40) + '_' + new Date().toISOString().substring(0,10) + '.xlsx';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+    toast('Exported ' + entries.length + ' entries', 'ok');
   });
 }
 

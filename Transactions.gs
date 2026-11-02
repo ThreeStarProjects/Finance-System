@@ -200,48 +200,6 @@ function _validateColNumberSoft(sheet, col){
   );
 }
 
-function _applyTxnDropdowns(sheet){
-  if (!sheet || typeof sheet.getRange !== 'function') return;
-  // Collect master lists (each in its own try so one failure doesn't kill the rest)
-  var cats = [];
-  try { (getCategories()||[]).forEach(function(c){ if(c && c.category && cats.indexOf(c.category)===-1) cats.push(c.category); }); } catch(e){}
-  try { (getEmployeeCategories()||[]).forEach(function(c){ if(c && c.category && cats.indexOf(c.category)===-1) cats.push(c.category); }); } catch(e){}
-  var pmodes=[], sources=[], employees=[], projects=[];
-  try { pmodes    = getPaymentModes()||[]; } catch(e){}
-  try { sources   = (getSourcesOfFunds()||[]).map(function(s){ return s && s.value; }).filter(Boolean); } catch(e){}
-  try { employees = (getEmployeeNames()||[]).slice(); } catch(e){}
-  try { projects  = (getProjectNames()||[]).slice(); } catch(e){}
-  // Always include 'Owner' in Submitted_By / On_Behalf_Of so direct-pasted owner rows pick cleanly
-  var submitters = ['Owner'].concat(employees);
-  var onBehalf   = ['Owner','Company'].concat(employees);
-
-  // List dropdowns
-  var listJobs = [
-    [TC.CATEGORY+1,     cats],
-    [TC.GROUP+1,        PNL_GROUPS],
-    [TC.SUBMITTED_BY+1, submitters],
-    [TC.ON_BEHALF_OF+1, onBehalf],
-    [TC.PROJECT+1,      projects],
-    [TC.LOCATION+1,     EXPENSE_LOCATIONS],
-    [TC.GST_RATE+1,     GST_RATES],
-    [TC.PAY_MODE+1,     pmodes],
-    [TC.SOURCE+1,       sources],
-    [TC.SETTLE_MODE+1,  pmodes],
-    [TC.FY+1,           FY_CHOICES]
-  ];
-  listJobs.forEach(function(p){ try { _validateColSoft(sheet, p[0], p[1]); } catch(e){ Logger.log('list-dropdown col '+p[0]+': '+e.message); } });
-
-  // Date validators — prevents the text-date bug that broke FY formulas
-  [TC.TX_DATE+1, TC.SUB_DATE+1, TC.SETTLE_DATE+1].forEach(function(c){
-    try { _validateColDateSoft(sheet, c); } catch(e){ Logger.log('date-validator col '+c+': '+e.message); }
-  });
-
-  // Number validators — prevents accidental text in numeric columns
-  [TC.AMOUNT+1, TC.TAXABLE+1, TC.CGST+1, TC.SGST+1, TC.IGST+1, TC.SETTLE_AMT+1].forEach(function(c){
-    try { _validateColNumberSoft(sheet, c); } catch(e){ Logger.log('number-validator col '+c+': '+e.message); }
-  });
-}
-
 function _applyTxnFormatting(sheet){
   var rng = sheet.getRange(2,1,5000,TC_TOTAL);
   var rb  = SpreadsheetApp.newConditionalFormatRule;
@@ -297,16 +255,6 @@ function _getProjectCostsSheet(){
   return sheet;
 }
 
-// Reset Project_Costs sheet (deletes old sheet and recreates with new structure)
-// Run this once after deploying the Batch 10 restructure
-function resetProjectCostsSheet(){
-  var ss = _getSS();
-  var old = ss.getSheetByName('Project_Costs');
-  if (old) ss.deleteSheet(old);
-  _getProjectCostsSheet();
-  return {success:true, message:'Project_Costs sheet rebuilt with new structure (' + PCC_TOTAL + ' columns)'};
-}
-
 // Batch 14: Non-destructive upgrade — add GST_Rate + Amount_Ex_GST columns to
 // an existing Project_Costs sheet without touching data. Run once from the
 // Apps Script editor after deploying.
@@ -329,11 +277,6 @@ function upgradeProjectCostsSchema(){
   }
   SpreadsheetApp.flush();
   return {success:true, message:'Added GST_Rate + Amount_Ex_GST columns. Existing rows backfilled (Amount_Ex_GST = Amount).'};
-}
-
-// URL of the backing Spreadsheet (for the "Open Sheet" button)
-function getSheetUrl(){
-  try { return _getSS().getUrl(); } catch(e){ return ''; }
 }
 
 function _nextCostId(){
@@ -499,12 +442,6 @@ function getProjectCostsRows(project, approvedOnly){
   return {success:true, rows:rows, total:total, count:rows.length};
 }
 
-// Back-compat shim: old UI called getProjectCostsSummary — now returns a lightweight total
-function getProjectCostsSummary(project, approvedOnly){
-  var res = getProjectCostsRows(project, approvedOnly);
-  return {success:res.success, total:res.total, count:res.count};
-}
-
 // Returns categories list with their groups, for dropdown population
 function getCategoriesForProjectCosts(){
   try {
@@ -515,43 +452,6 @@ function getCategoriesForProjectCosts(){
   } catch(e){
     return {success:false, error:e.message, categories:[]};
   }
-}
-
-function getProjectTransactionsSummary(project){
-  // Returns transactions (invoices/bills/expenses) for this project
-  // {success:true, total, byType: {Invoice: {...}, Bill: {...}, Expense: {...}}}
-  if(!project) return {success:false, error: 'Project required'};
-  var sheet = _getTxnSheet(new Date());
-  var data = sheet.getDataRange().getValues();
-  var summary = {success:true, total: 0, byType: {}};
-
-  for(var i=1; i<data.length; i++){
-    var row = data[i];
-    if(_s(row[TC.DELETED])==='Yes' || _s(row[TC.PROJECT])!==project) continue;
-    var type = _s(row[TC.ENTRY_TYPE]); // Invoice, Bill, Expense, etc.
-    var amt = _n(row[TC.AMOUNT])||0;
-    summary.total += amt;
-    if(!summary.byType[type]) summary.byType[type] = {count:0, amount:0};
-    summary.byType[type].count++;
-    summary.byType[type].amount += amt;
-  }
-  return summary;
-}
-
-function getProjectTotalCosts(project, approvedOnly){
-  // Returns: {success:true, projectCosts, transactionCosts, combined, breakdown}
-  if(!project) return {success:false, error: 'Project required'};
-  if(approvedOnly === undefined) approvedOnly = true;
-  var pc = getProjectCostsSummary(project, approvedOnly);
-  var tx = getProjectTransactionsSummary(project);
-  return {
-    success: true,
-    projectCosts: pc.total,
-    transactionCosts: tx.total,
-    combined: pc.total + tx.total,
-    projectCostsByType: pc.byType,
-    transactionsByType: tx.byType
-  };
 }
 
 // Optional pre-create
@@ -1735,7 +1635,7 @@ function processBulkPaste(){
     var last = sh.getLastRow();
     if (last < 2) return;
     var name = sh.getName();
-    try { _applyTxnDropdowns(sh); totalDropdowns++; } catch(e){}
+    try { _applyTxnDropdownsLive(sh); totalDropdowns++; } catch(e){}
 
     var n = last - 1;
     var cats = sh.getRange(2, TC.CATEGORY+1,   n, 1).getValues();

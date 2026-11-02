@@ -204,7 +204,7 @@ function _advResolveEmployee(name){
 // PUBLIC API — Requests
 // ============================================================
 // Employee submits an advance request (from ExpenseForm.html).
-function advRequest(data){
+function submitAdvanceRequest(data){
   var lock = LockService.getScriptLock();
   try { lock.waitLock(15000); } catch(e){ return {success:false, message:'Busy, try again.'}; }
   try {
@@ -239,11 +239,8 @@ function advRequest(data){
   finally { try { lock.releaseLock(); } catch(e){} }
 }
 
-// Backward-compat alias (ExpenseForm.html calls this name).
-function submitAdvanceRequest(data){ return advRequest(data); }
-
 // Owner approves a request → writes a Given row linked back to the Request.
-function advApproveRequest(data){
+function approveAdvanceRequest(data){
   var lock = LockService.getScriptLock();
   try { lock.waitLock(15000); } catch(e){ return {success:false, message:'Busy, try again.'}; }
   try {
@@ -286,10 +283,8 @@ function advApproveRequest(data){
   } catch(err){ return {success:false, message:err.message}; }
   finally { try { lock.releaseLock(); } catch(e){} }
 }
-function approveAdvanceRequest(data){ return advApproveRequest(data); }
-
 // Reject a Request.
-function advRejectRequest(data){
+function rejectAdvanceRequest(data){
   var lock = LockService.getScriptLock();
   try { lock.waitLock(10000); } catch(e){ return {success:false, message:'Busy, try again.'}; }
   try {
@@ -311,10 +306,8 @@ function advRejectRequest(data){
   } catch(err){ return {success:false, message:err.message}; }
   finally { try { lock.releaseLock(); } catch(e){} }
 }
-function rejectAdvanceRequest(data){ return advRejectRequest(data); }
-
 // Employee or owner cancels a Pending request.
-function advCancelRequest(data){
+function cancelAdvanceRequest(data){
   var lock = LockService.getScriptLock();
   try { lock.waitLock(10000); } catch(e){ return {success:false, message:'Busy, try again.'}; }
   try {
@@ -334,12 +327,10 @@ function advCancelRequest(data){
   } catch(err){ return {success:false, message:err.message}; }
   finally { try { lock.releaseLock(); } catch(e){} }
 }
-function cancelAdvanceRequest(data){ return advCancelRequest(data); }
-
 // ============================================================
 // PUBLIC API — Given (owner-direct, no prior request)
 // ============================================================
-function advRecordGiven(data){
+function recordAdvanceGiven(data){
   var lock = LockService.getScriptLock();
   try { lock.waitLock(15000); } catch(e){ return {success:false, message:'Busy, try again.'}; }
   try {
@@ -368,7 +359,7 @@ function advRecordGiven(data){
     // keeps working). Treats it as a first recovery event.
     var alreadyRecovered = _n(data.alreadyRecovered);
     if (alreadyRecovered > 0){
-      advRecordRecovery({
+      recordAdvanceRecovery({
         employee: empRes.name, amount: alreadyRecovered,
         date: row.date, source: ADV_SALARY_DEDUCTION,
         notes: 'Already recovered at advance creation'
@@ -379,12 +370,10 @@ function advRecordGiven(data){
   } catch(err){ return {success:false, message:err.message}; }
   finally { try { lock.releaseLock(); } catch(e){} }
 }
-function recordAdvanceGiven(data){ return advRecordGiven(data); }
-
 // ============================================================
 // PUBLIC API — Recovery (FIFO, salary deduction or outside)
 // ============================================================
-function advRecordRecovery(data){
+function recordAdvanceRecovery(data){
   var lock = LockService.getScriptLock();
   try { lock.waitLock(15000); } catch(e){ return {success:false, message:'Busy, try again.'}; }
   try {
@@ -471,8 +460,6 @@ function advRecordRecovery(data){
   } catch(err){ return {success:false, message:err.message}; }
   finally { try { lock.releaseLock(); } catch(e){} }
 }
-function recordAdvanceRecovery(data){ return advRecordRecovery(data); }
-
 // ============================================================
 // READERS — used by Salary.gs, SalaryDashboard.gs, Home_FINAL_FIXED.html
 // ============================================================
@@ -798,7 +785,7 @@ function recordSalaryDeductionRecovery(empName, amount, monthLabel, salaryId){
   if (!empName) return {applied:0, remaining:0};
   var amt = _n(amount);
   if (amt <= 0) return {applied:0, remaining:0};
-  var res = advRecordRecovery({
+  var res = recordAdvanceRecovery({
     employee: empName, amount: amt,
     date: new Date(),
     source: ADV_SALARY_DEDUCTION,

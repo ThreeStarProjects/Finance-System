@@ -800,7 +800,7 @@
     <div class="tabnav" id="ar-tabnav">
       <button class="tabnav__btn is-active" data-tab="inv" onclick="showSubTab($('panel-ar'),'inv')">New Invoice</button>
       <button class="tabnav__btn"           data-tab="pay" onclick="showSubTab($('panel-ar'),'pay')">Customer Payment Received</button>
-      <button class="tabnav__btn"           data-tab="ret" onclick="showSubTab($('panel-ar'),'ret')">Material Return</button>
+      <button class="tabnav__btn"           data-tab="ret" onclick="showSubTab($('panel-ar'),'ret'); cnLoadInvoices(); cnListLoad();">Credit Note</button>
       <button class="tabnav__btn"           data-tab="invlist" onclick="showSubTab($('panel-ar'),'invlist'); arLoadInvoices();">Invoices</button>
       <button class="tabnav__btn"           data-tab="prec" onclick="showSubTab($('panel-ar'),'prec'); arLoadPayments();">Payments Received</button>
       <button class="tabnav__btn"           data-tab="led" onclick="showSubTab($('panel-ar'),'led'); arLoadLedgerOpts();">Customer Ledger</button>
@@ -976,17 +976,49 @@
       </div>
     </div>
 
-    <!-- Material Return -->
+    <!-- Credit Note: entry form + list on one tab (#r-cust / #r-date are filled by arInit) -->
     <div class="tabpane" data-tab="ret">
       <div class="card">
-        <div class="grid-2">
-          <div class="field"><label>Invoice number *</label><input class="input" id="r-inv" placeholder="3S/FY/nnn" /></div>
-          <div class="field"><label>Return date</label><input class="input" type="date" id="r-date" /></div>
+        <div class="grid-3">
+          <div class="field"><label>Customer *
+            <span class="small muted">who the credit note is for</span></label>
+            <select class="select" id="r-cust" onchange="cnLoadInvoices()"></select></div>
+          <div class="field"><label>Credit Note #
+            <span class="small muted">our CN number — one per batch</span></label>
+            <input class="input" id="r-cn" placeholder="(optional)" /></div>
+          <div class="field"><label>Credit note date</label><input class="input" type="date" id="r-date" /></div>
         </div>
-        <div class="field"><label>Return amount (₹) *</label><input class="input" type="number" id="r-amt" min="0" step="0.01" /></div>
+        <div class="field"><label>Invoices *
+          <span class="small muted">tick each invoice this credit note applies to and type the amount for that invoice</span></label>
+          <div id="cn-inv-list" style="border:1px solid var(--border); border-radius:4px; max-height:300px; overflow-y:auto; background:var(--surface); padding:4px;">
+            <div class="small muted" style="padding:10px;">Select a customer to see invoices.</div>
+          </div>
+          <div class="small" style="margin-top:6px; display:flex; justify-content:space-between;">
+            <span>Total: ₹<span id="cn-total">0</span></span>
+            <span class="muted" id="cn-count">0 invoices selected</span>
+          </div>
+        </div>
         <div class="field"><label>Reason / Notes</label><textarea class="textarea" id="r-notes"></textarea></div>
-        <button class="btn" onclick="submitReturn()">Record Return</button>
-        <div class="hint">Return will reduce the linked invoice's outstanding balance.</div>
+        <button class="btn" onclick="cnSubmit()">Record Credit Note</button>
+        <div class="hint">Each ticked invoice becomes its own RET-#### entry and reduces that invoice's outstanding. Sales, P&amp;L and the customer ledger already deduct these.</div>
+      </div>
+      <div class="filterbar">
+        <select class="select" id="cnl-cust" onchange="cnListLoad()"><option value="">All customers</option></select>
+        <select class="select" id="cnl-fy" onchange="cnListLoad()">
+          <option value="current">Current FY</option>
+          <option value="all" selected>All FYs</option>
+        </select>
+        <span class="filterbar__status" id="cnl-status">—</span>
+      </div>
+      <div class="tablewrap">
+        <table class="table" id="cnl-table">
+          <thead><tr>
+            <th>Return #</th><th>Credit Note #</th><th>Customer</th><th>Date</th>
+            <th>Against invoice</th><th class="num">Amount</th>
+            <th>Reason</th><th class="col-actions">Actions</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
       </div>
     </div>
 
@@ -1089,8 +1121,7 @@
     <div class="tabnav" id="ap-tabnav">
       <button class="tabnav__btn is-active" data-tab="newbill" onclick="showSubTab($('panel-ap'),'newbill')">New Bill</button>
       <button class="tabnav__btn"           data-tab="paybill" onclick="showSubTab($('panel-ap'),'paybill')">Vendor Payment Made</button>
-      <button class="tabnav__btn"           data-tab="credit"  onclick="showSubTab($('panel-ap'),'credit')">Credit Note</button>
-      <button class="tabnav__btn"           data-tab="credits" onclick="showSubTab($('panel-ap'),'credits'); brListLoad();">Credit Notes</button>
+      <button class="tabnav__btn"           data-tab="credit"  onclick="showSubTab($('panel-ap'),'credit'); brListLoad();">Credit Note</button>
       <button class="tabnav__btn"           data-tab="bills"   onclick="showSubTab($('panel-ap'),'bills'); apLoadBills();">Bills</button>
       <button class="tabnav__btn"           data-tab="pmade"   onclick="showSubTab($('panel-ap'),'pmade'); apLoadPayments();">Payments Made</button>
       <button class="tabnav__btn"           data-tab="vledger" onclick="showSubTab($('panel-ap'),'vledger')">Vendor Ledger</button>
@@ -1347,10 +1378,8 @@
         <button class="btn" onclick="submitBillReturn()">Record Credit Note</button>
         <div class="hint">Each ticked bill becomes its own BRET-#### entry so the vendor ledger shows the breakdown. The same vendor's CN # is stamped on all lines.</div>
       </div>
-    </div>
 
-    <!-- Credit Notes list -->
-    <div class="tabpane" data-tab="credits">
+      <!-- Credit Notes list (same tab, under the form) -->
       <div class="filterbar">
         <select class="select" id="brl-vendor" onchange="brListLoad()"><option value="">All vendors</option></select>
         <select class="select" id="brl-fy" onchange="brListLoad()">
@@ -6918,19 +6947,112 @@ function submitPayment(){
   });
 }
 
-function submitReturn(){
-  var data = {
-    invoiceNo: $('r-inv').value.trim(),
-    returnDate: $('r-date').value,
-    returnAmount: parseFloat($('r-amt').value)||0,
-    reason: $('r-notes').value
-  };
-  if (!data.invoiceNo){ toast('Invoice number required','err'); return; }
-  if (data.returnAmount <= 0){ toast('Return amount required','err'); return; }
-  callServer('recordReturn', [data], function(res){
-    if (!res || !res.success){ toast((res && res.message) || 'Failed','err'); return; }
-    toast('Return recorded', 'ok');
-    ['r-inv','r-amt','r-notes'].forEach(function(id){ $(id).value=''; });
+// ── Sales credit notes (server: Invoices.gs → recordCreditNoteBatch etc.) ──
+function cnLoadInvoices(){
+  var cust = $('r-cust').value, box = $('cn-inv-list');
+  if (!cust){ box.innerHTML = '<div class="small muted" style="padding:10px;">Select a customer to see invoices.</div>'; cnRecalc(); return; }
+  box.innerHTML = '<div class="small muted" style="padding:10px;">Loading…</div>';
+  callServer('listInvoices', [{customerId: cust, fy: 'all'}], function(invs){
+    invs = (invs || []).filter(function(i){ return i.status !== 'Cancelled'; });
+    if (!invs.length){ box.innerHTML = '<div class="small muted" style="padding:10px;">No invoices for this customer.</div>'; cnRecalc(); return; }
+    box.innerHTML = invs.map(function(i){
+      var tail = i.outstanding > 0 ? 'outstanding ₹' + i.outstanding.toLocaleString('en-IN')
+                                   : 'paid · total ₹' + (i.amount||0).toLocaleString('en-IN');
+      return '<div style="display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--border);">' +
+        '<input type="checkbox" class="cn-chk" data-ref="'+esc(i.no)+'" onchange="cnRecalc()" />' +
+        '<div style="flex:1; font-size:12.5px;">'+esc(i.no)+' · '+esc(i.invDate)+' · '+tail+'</div>' +
+        '<input type="number" min="0" step="0.01" class="input cn-amt" style="width:130px;" placeholder="amount" value="'+(i.outstanding > 0 ? i.outstanding : '')+'" oninput="cnRecalc()" />' +
+      '</div>';
+    }).join('');
+    cnRecalc();
+  });
+}
+
+function cnRecalc(){
+  var total = 0, count = 0, chks = document.querySelectorAll('#cn-inv-list .cn-chk');
+  for (var i=0;i<chks.length;i++){
+    if (chks[i].checked){ count++; total += parseFloat(chks[i].parentNode.querySelector('.cn-amt').value) || 0; }
+  }
+  $('cn-total').textContent = total.toLocaleString('en-IN', {maximumFractionDigits:2});
+  $('cn-count').textContent = count + ' invoice' + (count===1?'':'s') + ' selected';
+}
+
+function cnSubmit(){
+  if (!$('r-cust').value){ toast('Customer required','err'); return; }
+  var lines = [], chks = document.querySelectorAll('#cn-inv-list .cn-chk');
+  for (var i=0;i<chks.length;i++){
+    if (!chks[i].checked) continue;
+    var amt = parseFloat(chks[i].parentNode.querySelector('.cn-amt').value) || 0;
+    if (amt <= 0){ toast('Enter an amount for every ticked invoice','err'); return; }
+    lines.push({invoiceNo: chks[i].getAttribute('data-ref'), amount: amt});
+  }
+  if (!lines.length){ toast('Tick at least one invoice','err'); return; }
+  var payload = {customerId: $('r-cust').value, returnDate: $('r-date').value, cnNo: $('r-cn').value.trim(),
+                 reason: $('r-notes').value, notes: '', lines: lines};
+  callServer('recordCreditNoteBatch', [payload], function(res){
+    if (!res){ toast('No response','err'); return; }
+    if (res.success) toast(res.message || 'Credit notes recorded', 'ok');
+    else {
+      var bad = (res.results||[]).filter(function(r){ return !r.ok; })[0];
+      toast((res.message || 'Failed') + (bad ? ' — ' + bad.invoiceNo + ': ' + bad.message : ''), 'err');
+    }
+    $('r-notes').value = ''; $('r-cn').value = '';
+    cnLoadInvoices(); cnListLoad();
+    if (res.okCount > 0) refreshAfterSave({customerId: $('r-cust').value});
+  });
+}
+
+function cnListLoad(){
+  var sel = $('cnl-cust');
+  if (sel.options.length < 2){   // first open: fill customers
+    sel.innerHTML = '<option value="">All customers</option>' +
+      (CFG.customers||[]).map(function(c){ return '<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>'; }).join('');
+  }
+  var body = document.querySelector('#cnl-table tbody');
+  $('cnl-status').textContent = 'Loading…';
+  body.innerHTML = '<tr><td colspan="8" class="muted">Loading…</td></tr>';
+  callServer('listCreditNotes', [{customerId: sel.value, fy: $('cnl-fy').value}], function(res){
+    if (!res || !res.ok){
+      $('cnl-status').textContent = 'Error: ' + ((res && res.error) || 'no response');
+      body.innerHTML = '<tr><td colspan="8" class="muted">Load failed</td></tr>'; return;
+    }
+    var rows = res.rows || [];
+    $('cnl-status').textContent = rows.length + ' credit note' + (rows.length===1?'':'s');
+    if (!rows.length){ body.innerHTML = '<tr><td colspan="8" class="muted">No credit notes</td></tr>'; return; }
+    body.innerHTML = rows.map(function(r){
+      return '<tr><td>'+esc(r.id)+'</td><td>'+(esc(r.cnNo) || '—')+'</td><td>'+esc(r.customerName)+'</td>' +
+        '<td>'+esc(r.date)+'</td><td>'+esc(r.invoiceNo)+'</td>' +
+        '<td class="num">₹'+(r.amount||0).toLocaleString('en-IN')+'</td><td>'+esc(r.reason)+'</td>' +
+        '<td><button class="btn btn--xs btn--ghost" onclick="cnEdit(\''+esc(r.id)+'\')">Edit</button> ' +
+        '<button class="btn btn--xs" style="background:#DC2626;" onclick="cnCancel(\''+esc(r.id)+'\')">Cancel</button></td></tr>';
+    }).join('');
+  });
+}
+
+function cnCancel(id){
+  var reason = prompt('Reason for cancelling credit note ' + id + '?');
+  if (reason === null) return;
+  callServer('cancelCreditNote', [id, reason], function(res){
+    if (!res || !res.success){ toast((res && res.message) || 'Cancel failed','err'); return; }
+    toast('Credit note ' + id + ' cancelled; invoice outstanding restored.','ok');
+    cnLoadInvoices(); cnListLoad();
+  });
+}
+
+function cnEdit(id){
+  // Amount is NOT editable — cancel + re-create so invoice outstanding stays consistent.
+  var cn = prompt('Credit Note # (leave blank to keep):', ''); if (cn === null) return;
+  var reason = prompt('Reason (leave blank to keep):', ''); if (reason === null) return;
+  var notes = prompt('Notes (leave blank to keep):', ''); if (notes === null) return;
+  var patches = {};
+  if (cn !== '') patches.cnNo = cn;
+  if (reason !== '') patches.reason = reason;
+  if (notes !== '') patches.notes = notes;
+  if (!Object.keys(patches).length){ toast('Nothing to update','ok'); return; }
+  callServer('updateCreditNote', [id, patches], function(res){
+    if (!res || !res.success){ toast((res && res.message) || 'Update failed','err'); return; }
+    toast('Credit note ' + id + ' updated','ok');
+    cnListLoad();
   });
 }
 
@@ -7004,6 +7126,7 @@ function submitBillReturn(){
     $('br-notes').value = '';
     $('br-cn').value = '';
     brLoadBills();
+    brListLoad();
   });
 }
 
@@ -7117,7 +7240,7 @@ function loadLedger(){
           ctx = '<span class="muted">advance from customer — not yet linked to any invoice</span>';
         }
       } else {
-        ctx = '<span class="muted">—</span>';
+        ctx = e.applied ? '<span class="small">'+esc(e.applied)+'</span>' : '<span class="muted">—</span>';
       }
       var row = '<tr><td>'+esc(fmtShortDate(e.date))+'</td>' +
              '<td>'+esc(e.type)+'</td>' +

@@ -66,6 +66,12 @@ var PAYMENT_WIDTHS = [130,110,240,120,80,120,130,160,320,140,220,160,110,120,160
 
 var RC = { ID:0, INV_NO:1, CUST_ID:2, CUST_NAME:3, DATE:4, FY:5, AMOUNT:6, REASON:7, NOTES:8, CREATED:9 };
 var RC_TOTAL = 10;
+// Credit Note No. is appended as an 11th Returns column (readers of RC_TOTAL are unaffected).
+var CN_COL_NO = 10;
+var CN_TOTAL  = RC_TOTAL + 1;
+var CN_LOG    = 'Credit_Note_Log';
+var CN_LOG_HEADERS = ['Return_ID','Credit_Note_No','Invoice_No','Customer_ID','Customer_Name',
+                      'Return_Date','Amount','Reason','Cancelled_On','Cancelled_By','Cancel_Reason'];
 var RETURN_HEADERS = ['Return_ID','Invoice_No','Customer_ID','Customer_Name','Return_Date','FY',
   'Return_Amount','Reason','Notes','Created_Date'];
 var RETURN_WIDTHS = [120,150,110,240,120,80,120,260,220,160];
@@ -621,10 +627,15 @@ function getCustomerLedger(customerId){
     }
     var rSheet = ss.getSheetByName(AR.RETURNS);
     if (rSheet && rSheet.getLastRow()>1){
-      rSheet.getRange(2,1,rSheet.getLastRow()-1,RC_TOTAL).getValues().forEach(function(r){
-        if (_s(r[RC.CUST_ID]) === _s(customerId))
-          entries.push({date:_asDate(r[RC.DATE]), type:'Return', ref:_s(r[RC.ID]),
+      var rW = Math.min(rSheet.getLastColumn(), CN_TOTAL);
+      rSheet.getRange(2,1,rSheet.getLastRow()-1,rW).getValues().forEach(function(r){
+        if (_s(r[RC.CUST_ID]) === _s(customerId)){
+          var cn = rW > CN_COL_NO ? _s(r[CN_COL_NO]) : '';
+          entries.push({date:_asDate(r[RC.DATE]), type:'Credit Note',
+                        ref:_s(r[RC.ID]) + (cn ? ' · CN:' + cn : ''),
+                        applied:'against ' + _s(r[RC.INV_NO]),
                         debit:0, credit:_n(r[RC.AMOUNT])});
+        }
       });
     }
 
@@ -991,4 +1002,166 @@ function listInvoices(filters){
     }
     return out.sort(function(a,b){ return (b.invDate||'').localeCompare(a.invDate||''); });
   } catch(e){ Logger.log('listInvoices: '+e.message); return []; }
+}
+
+// ============================================================
+// CREDIT NOTES  (customer-side mirror of BillReturns.gs)
+//   A credit note IS a row in the Returns sheet, so the ledger, directory and
+//   sales / P&L / AR dashboards that already subtract Returns keep working.
+//   Adds: our CN number, one CN across many invoices, list, edit, cancel.
+//   Cancel REMOVES the Returns row (no reader needs a Deleted check) and
+//   writes an audit row to Credit_Note_Log.
+// ============================================================
+function _cnReturnsSheet(){
+  var ss = _getSS();
+  var sh = ss.getSheetByName(AR.RETURNS);
+  if (!sh){ setupAR(); sh = ss.getSheetByName(AR.RETURNS); }
+  if (sh.getLastColumn() < CN_TOTAL){
+    if (sh.getMaxColumns() < CN_TOTAL) sh.insertColumnsAfter(sh.getMaxColumns(), CN_TOTAL - sh.getMaxColumns());
+    sh.getRange(1, CN_COL_NO+1).setValue('Credit_Note_No')
+      .setBackground(BRAND.headerBg).setFontColor(BRAND.headerFg).setFontWeight('bold').setFontSize(11);
+    sh.setColumnWidth(CN_COL_NO+1, 150);
+  }
+  return sh;
+}
+
+// ============================================================
+// recordCreditNoteBatch — one credit note across N invoices of one customer
+//   payload = {customerId, returnDate, cnNo, reason, notes,
+//              lines:[{invoiceNo, amount}, …]}
+// Each line goes through recordReturn (its own validation + lock), then the
+// CN number is stamped on the new rows.
+// ============================================================
+function recordCreditNoteBatch(payload){
+  try {
+    payload = payload || {};
+    var lines = payload.lines || [];
+    if (!lines.length) return {success:false, message:'No invoices selected.'};
+
+    var ss = _getSS(), iSheet = ss.getSheetByName(AR.INVOICES), inv = {};
+    if (iSheet && iSheet.getLastRow() > 1){
+      iSheet.getRange(2,1,iSheet.getLastRow()-1,Math.min(iSheet.getLastColumn(), IC_TOTAL)).getValues()
+        .forEach(function(r){ inv[_s(r[IC.NO])] = {cust:_s(r[IC.CUST_ID]), status:_s(r[IC.STATUS])}; });
+    }
+    var cid = _s(payload.customerId), cn = _s(payload.cnNo);
+    var results = [], ids = [], fail = 0;
+    lines.forEach(function(ln){
+      ln = ln || {};
+      var no = _s(ln.invoiceNo), i = inv[no], res;
+      if (!i)                                   res = {success:false, message:'Invoice not found.'};
+      else if (i.status === INV_STATUS.CANCELLED) res = {success:false, message:'Invoice is cancelled.'};
+      else if (cid && i.cust !== cid)           res = {success:false, message:'Invoice belongs to another customer.'};
+      else res = recordReturn({invoiceNo:no, returnDate:payload.returnDate, returnAmount:_n(ln.amount),
+                               reason:payload.reason, notes:payload.notes});
+      if (res.success) ids.push(res.returnId); else fail++;
+      results.push({invoiceNo:no, ok:!!res.success, returnId:res.returnId||'', message:res.message||''});
+    });
+
+    if (ids.length && cn){
+      var lock = LockService.getScriptLock();
+      lock.waitLock(15000);
+      try {
+        var rs = _cnReturnsSheet(), col = rs.getRange(2,1,rs.getLastRow()-1,1).getValues();
+        for (var k=0;k<col.length;k++){
+          if (ids.indexOf(_s(col[k][0])) !== -1) rs.getRange(k+2, CN_COL_NO+1).setValue(cn);
+        }
+        SpreadsheetApp.flush();
+      } finally { try { lock.releaseLock(); } catch(e){} }
+    }
+    return {success: fail === 0, okCount: ids.length, failCount: fail, returnIds: ids, results: results,
+            message: fail === 0 ? ('Recorded '+ids.length+' credit note'+(ids.length===1?'':'s')+'.')
+                                : (ids.length+' recorded, '+fail+' failed — see results.')};
+  } catch(err){ return {success:false, message:err.message}; }
+}
+
+// ============================================================
+// cancelCreditNote — restore invoice Outstanding, remove the Returns row,
+// keep an audit row in Credit_Note_Log.
+// ============================================================
+function cancelCreditNote(returnId, reason){
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(15000); } catch(e){ return {success:false, message:'Busy — try again.'}; }
+  try {
+    var id = _s(returnId); if (!id) return {success:false, message:'Return ID required.'};
+    var ss = _getSS(), rs = _cnReturnsSheet();
+    if (rs.getLastRow() < 2) return {success:false, message:'No credit notes on file.'};
+    var rows = rs.getRange(2,1,rs.getLastRow()-1,CN_TOTAL).getValues(), hit = -1;
+    for (var i=0;i<rows.length;i++){ if (_s(rows[i][RC.ID]) === id){ hit = i; break; } }
+    if (hit < 0) return {success:false, message:'Credit note '+id+' not found.'};
+    var r = rows[hit], amt = _n(r[RC.AMOUNT]), invNo = _s(r[RC.INV_NO]);
+
+    var iSheet = ss.getSheetByName(AR.INVOICES);
+    if (iSheet && iSheet.getLastRow() > 1){
+      var inv = iSheet.getRange(2,1,iSheet.getLastRow()-1,Math.min(iSheet.getLastColumn(), IC_TOTAL)).getValues();
+      for (var j=0;j<inv.length;j++){
+        if (_s(inv[j][IC.NO]) !== invNo) continue;
+        if (_s(inv[j][IC.STATUS]) !== INV_STATUS.CANCELLED){
+          var paid = _n(inv[j][IC.PAID]);
+          var restored = _round(Math.min(_n(inv[j][IC.OUTSTANDING]) + amt, Math.max(0, _n(inv[j][IC.AMOUNT]) - paid)));
+          iSheet.getRange(j+2, IC.OUTSTANDING+1).setValue(restored);
+          iSheet.getRange(j+2, IC.STATUS+1).setValue(restored <= 0.01 ? INV_STATUS.PAID
+                                                    : paid > 0        ? INV_STATUS.PARTIAL
+                                                                      : INV_STATUS.UNPAID);
+        }
+        break;
+      }
+    }
+
+    var log = _buildSheet(ss, CN_LOG, CN_LOG_HEADERS, [110,150,150,110,230,110,110,260,160,200,300]);
+    var who = ''; try { who = Session.getActiveUser().getEmail(); } catch(e){}
+    log.appendRow([id, _s(r[CN_COL_NO]), invNo, _s(r[RC.CUST_ID]), _s(r[RC.CUST_NAME]),
+      _safeDateStr(r[RC.DATE]), amt, _s(r[RC.REASON]),
+      Utilities.formatDate(new Date(),'GMT+5:30','yyyy-MM-dd HH:mm:ss'), who, _s(reason)]);
+    rs.deleteRow(hit + 2);
+    SpreadsheetApp.flush();
+    return {success:true, returnId:id, invoiceNo:invNo};
+  } catch(err){ return {success:false, message:err.message}; }
+  finally { try { lock.releaseLock(); } catch(e){} }
+}
+
+// Metadata only — amount changes = cancel + re-create (same rule as bill CNs).
+function updateCreditNote(returnId, patches){
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(15000); } catch(e){ return {success:false, message:'Busy — try again.'}; }
+  try {
+    var id = _s(returnId); if (!id) return {success:false, message:'Return ID required.'};
+    var rs = _cnReturnsSheet();
+    if (rs.getLastRow() < 2) return {success:false, message:'No credit notes on file.'};
+    var ids = rs.getRange(2,1,rs.getLastRow()-1,1).getValues(), hit = -1;
+    for (var i=0;i<ids.length;i++){ if (_s(ids[i][0]) === id){ hit = i; break; } }
+    if (hit < 0) return {success:false, message:'Credit note '+id+' not found.'};
+    patches = patches || {};
+    var row = hit + 2;
+    if (patches.hasOwnProperty('cnNo'))   rs.getRange(row, CN_COL_NO+1).setValue(_s(patches.cnNo));
+    if (patches.hasOwnProperty('reason')) rs.getRange(row, RC.REASON+1).setValue(_s(patches.reason));
+    if (patches.hasOwnProperty('notes'))  rs.getRange(row, RC.NOTES+1).setValue(_s(patches.notes));
+    SpreadsheetApp.flush();
+    return {success:true, returnId:id};
+  } catch(err){ return {success:false, message:err.message}; }
+  finally { try { lock.releaseLock(); } catch(e){} }
+}
+
+// listCreditNotes({customerId?, fy?}) → {ok, rows, error}, newest first.
+function listCreditNotes(filters){
+  try {
+    filters = filters || {};
+    var rs = _getSS().getSheetByName(AR.RETURNS);
+    if (!rs || rs.getLastRow() < 2) return {ok:true, rows:[], error:null};
+    var w = Math.min(rs.getLastColumn(), CN_TOTAL);
+    var cid = _s(filters.customerId), fy = _s(filters.fy);
+    if (fy === 'current') fy = _currentFY();
+    if (fy === 'all') fy = '';
+    var rows = rs.getRange(2,1,rs.getLastRow()-1,w).getValues()
+      .filter(function(r){
+        return _s(r[RC.ID]) && (!cid || _s(r[RC.CUST_ID]) === cid) && (!fy || _s(r[RC.FY]) === fy);
+      })
+      .map(function(r){ return {
+        id:_s(r[RC.ID]), invoiceNo:_s(r[RC.INV_NO]), customerId:_s(r[RC.CUST_ID]),
+        customerName:_s(r[RC.CUST_NAME]), date:_safeDateStr(r[RC.DATE]), fy:_s(r[RC.FY]),
+        amount:_n(r[RC.AMOUNT]), reason:_s(r[RC.REASON]), notes:_s(r[RC.NOTES]),
+        cnNo: w > CN_COL_NO ? _s(r[CN_COL_NO]) : ''
+      }; });
+    rows.sort(function(a,b){ return (b.date||'').localeCompare(a.date||'') || b.id.localeCompare(a.id); });
+    return {ok:true, rows:rows, error:null};
+  } catch(e){ return {ok:false, rows:[], error:String(e && e.message || e)}; }
 }

@@ -1090,6 +1090,7 @@
       <button class="tabnav__btn is-active" data-tab="newbill" onclick="showSubTab($('panel-ap'),'newbill')">New Bill</button>
       <button class="tabnav__btn"           data-tab="paybill" onclick="showSubTab($('panel-ap'),'paybill')">Vendor Payment Made</button>
       <button class="tabnav__btn"           data-tab="credit"  onclick="showSubTab($('panel-ap'),'credit')">Credit Note</button>
+      <button class="tabnav__btn"           data-tab="credits" onclick="showSubTab($('panel-ap'),'credits'); brListLoad();">Credit Notes</button>
       <button class="tabnav__btn"           data-tab="bills"   onclick="showSubTab($('panel-ap'),'bills'); apLoadBills();">Bills</button>
       <button class="tabnav__btn"           data-tab="pmade"   onclick="showSubTab($('panel-ap'),'pmade'); apLoadPayments();">Payments Made</button>
       <button class="tabnav__btn"           data-tab="vledger" onclick="showSubTab($('panel-ap'),'vledger')">Vendor Ledger</button>
@@ -1323,14 +1324,54 @@
     <!-- Credit Note / Vendor Return -->
     <div class="tabpane" data-tab="credit">
       <div class="card">
-        <div class="grid-2">
-          <div class="field"><label>Bill ID or Vendor Bill No *</label><input class="input" id="br-ref" placeholder="BILL-#### or vendor's bill number" /></div>
+        <div class="grid-3">
+          <div class="field"><label>Vendor *
+            <span class="small muted">who issued the credit note</span></label>
+            <select class="select" id="br-vend" onchange="brLoadBills()"></select></div>
+          <div class="field"><label>Vendor's Credit Note #
+            <span class="small muted">e.g. CN/2026/0045 — one number per batch</span></label>
+            <input class="input" id="br-cn" placeholder="(optional)" /></div>
           <div class="field"><label>Return date</label><input class="input" type="date" id="br-date" /></div>
         </div>
-        <div class="field"><label>Return amount (₹) *</label><input class="input" type="number" id="br-amt" min="0" step="0.01" /></div>
+        <div class="field"><label>Bills *
+          <span class="small muted">tick each bill this credit note applies to and type the amount for that bill</span></label>
+          <div id="br-bills-list" style="border:1px solid var(--border); border-radius:4px; max-height:300px; overflow-y:auto; background:var(--surface); padding:4px;">
+            <div class="small muted" style="padding:10px;">Select a vendor to see bills.</div>
+          </div>
+          <div class="small" style="margin-top:6px; display:flex; justify-content:space-between;">
+            <span>Total: ₹<span id="br-total">0</span></span>
+            <span class="muted" id="br-count">0 bills selected</span>
+          </div>
+        </div>
         <div class="field"><label>Reason / Notes</label><textarea class="textarea" id="br-notes"></textarea></div>
         <button class="btn" onclick="submitBillReturn()">Record Credit Note</button>
-        <div class="hint">Credit note will reduce the linked bill's outstanding balance. Accepts either our Bill_ID (BILL-####) or the vendor's own bill number.</div>
+        <div class="hint">Each ticked bill becomes its own BRET-#### entry so the vendor ledger shows the breakdown. The same vendor's CN # is stamped on all lines.</div>
+      </div>
+    </div>
+
+    <!-- Credit Notes list -->
+    <div class="tabpane" data-tab="credits">
+      <div class="filterbar">
+        <select class="select" id="brl-vendor" onchange="brListLoad()"><option value="">All vendors</option></select>
+        <select class="select" id="brl-fy" onchange="brListLoad()">
+          <option value="current">Current FY</option>
+          <option value="all" selected>All FYs</option>
+        </select>
+        <label class="small" style="display:flex; align-items:center; gap:6px; margin-left:auto;">
+          <input type="checkbox" id="brl-showcancel" onchange="brListLoad()" />
+          Show cancelled
+        </label>
+        <span class="filterbar__status" id="brl-status">—</span>
+      </div>
+      <div class="tablewrap">
+        <table class="table" id="brl-table">
+          <thead><tr>
+            <th>Credit Note #</th><th>Vendor CN #</th><th>Vendor</th><th>Date</th>
+            <th>Against bill</th><th class="num">Amount</th>
+            <th>Reason</th><th>Status</th><th class="col-actions">Actions</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
       </div>
     </div>
 
@@ -2872,6 +2913,28 @@ function _rrow(bullet, text, extraClass){
 }
 function _arr(){ return '<span class="kpi__recon__arrow">→</span>'; }
 
+// Billed Amount sub-text — joins dashKpis (gross/CN) with getAPReconciliation
+// (paidUnapplied = vendor advances). Called from both callbacks; shows what's
+// landed so far. Multi-line via <br> to match the "rest of KPIs" pattern.
+function _paintBilledSub(){
+  var el = $('kpi-billed-sub'); if (!el) return;
+  var b = DASH_STATE.billedKpiPart || {};
+  var r = DASH_STATE.apReconPart || {};
+  var cn = b.cn || 0;
+  var gross = b.gross || 0;
+  var adv = r.paidUnapplied || 0;
+  var lines = [];
+  if (cn > 0 && gross){
+    lines.push('Gross ₹' + fmt(gross) + ' − CN ₹' + fmt(cn) + ' = Net ₹' + fmt(gross - cn));
+  }
+  if (adv > 0){
+    lines.push('Vendor advances held: ₹' + fmt(adv));
+  }
+  // Only overwrite the default "N bills in FY X" line when we have something
+  // to say — otherwise leave getBilledAmountFy's text alone.
+  if (lines.length) el.innerHTML = lines.join('<br>');
+}
+
 // Bills Remaining sub-text — joins dashKpis line (cash out total) with AP
 // reconciliation (Billed − Paid against these = Open) and the two prior-FY
 // footnotes (prior-FY bills still open · prior-FY bills' share of Bills Paid).
@@ -3158,6 +3221,12 @@ function loadDashboard(){
     animateKpiNumber($('kpi-bills-remaining'), '₹ ' + fmt(d.billsUnpaid || 0));
     DASH_STATE.billsKpiPart = 'Still to pay to vendors · paid ₹ ' + fmt(d.billsPaid || 0);
     _paintBillsRemSub();
+    // Stash the pieces the Billed-sub joiner needs; actual paint happens there.
+    DASH_STATE.billedKpiPart = {
+      gross: d.billsBooked || 0,
+      cn:    d.creditNotesReceived || 0
+    };
+    _paintBilledSub();
   });
 
   // ── Billed Amount (vendor) — gross vendor bills issued this FY
@@ -3224,6 +3293,7 @@ function loadDashboard(){
     if (!res || !res.ok) return;  // leave what dashKpis painted
     DASH_STATE.apReconPart = res.data;
     _paintBillsRemSub();
+    _paintBilledSub();   // picks up paidUnapplied (vendor advances)
   });
 
   // ── Row 3 (project aggregates) + compact Project table + Top-5 by margin — one call.
@@ -4859,7 +4929,7 @@ function apInit(){
   var vendors = (CFG.vendors||[]);
   var vOpts = '<option value="">Select vendor…</option>' +
     vendors.map(function(v){ return '<option value="'+esc(v.id)+'">'+esc(v.name)+'</option>'; }).join('');
-  ['ab-vend','bp-vend','vl-vend','bl-vendor'].forEach(function(id){ var el = $(id); if (el) el.innerHTML = (id==='bl-vendor' ? '<option value="">All vendors</option>' : vOpts); });
+  ['ab-vend','bp-vend','vl-vend','bl-vendor','br-vend','brl-vendor'].forEach(function(id){ var el = $(id); if (el) el.innerHTML = (id==='bl-vendor' ? '<option value="">All vendors</option>' : id==='brl-vendor' ? ('<option value="">All vendors</option>' + vOpts) : id==='br-vend' ? ('<option value="">Select vendor…</option>' + vOpts) : vOpts); });
   if ($('bl-vendor')) $('bl-vendor').innerHTML = '<option value="">All vendors</option>' +
     vendors.map(function(v){ return '<option value="'+esc(v.id)+'">'+esc(v.name)+'</option>'; }).join('');
   $('bp-mode').innerHTML = buildOptions(CFG.paymentModes||[], 'Select mode…');
@@ -6864,19 +6934,148 @@ function submitReturn(){
   });
 }
 
+function brLoadBills(){
+  var vend = $('br-vend').value;
+  var box = $('br-bills-list');
+  if (!vend){ box.innerHTML = '<div class="small muted" style="padding:10px;">Select a vendor to see bills.</div>'; brRecalc(); return; }
+  box.innerHTML = '<div class="small muted" style="padding:10px;">Loading…</div>';
+  callServer('listBills', [{vendorId: vend, fy: 'all'}], function(bills){
+    bills = (bills || []).filter(function(b){ return b.status !== 'Cancelled'; });
+    if (!bills.length){ box.innerHTML = '<div class="small muted" style="padding:10px;">No bills for this vendor.</div>'; brRecalc(); return; }
+    box.innerHTML = bills.map(function(b){
+      var val = b.id || b.billNo;
+      var tail = b.outstanding > 0
+        ? 'outstanding ₹' + b.outstanding.toLocaleString('en-IN')
+        : 'paid · total ₹' + (b.amount||0).toLocaleString('en-IN');
+      var preFill = b.outstanding > 0 ? b.outstanding : '';
+      var label = (b.id || '') + (b.billNo ? ' · ' + b.billNo : '') + ' · ' + b.billDate + ' · ' + tail;
+      return (
+        '<div style="display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--border);">' +
+          '<input type="checkbox" class="br-chk" data-ref="'+val+'" data-max="'+(b.amount||0)+'" onchange="brRecalc()" />' +
+          '<div style="flex:1; font-size:12.5px;">'+label+'</div>' +
+          '<input type="number" min="0" step="0.01" class="input br-amt" style="width:130px;" placeholder="amount" value="'+preFill+'" oninput="brRecalc()" />' +
+        '</div>'
+      );
+    }).join('');
+    brRecalc();
+  });
+}
+
+function brRecalc(){
+  var total = 0, count = 0;
+  var chks = document.querySelectorAll('#br-bills-list .br-chk');
+  for (var i=0;i<chks.length;i++){
+    var row = chks[i].parentNode;
+    var amtEl = row.querySelector('.br-amt');
+    if (chks[i].checked){ count++; total += parseFloat(amtEl.value) || 0; }
+  }
+  $('br-total').textContent = total.toLocaleString('en-IN', {maximumFractionDigits:2});
+  $('br-count').textContent = count + ' bill' + (count===1?'':'s') + ' selected';
+}
+
 function submitBillReturn(){
-  var data = {
-    billRef: $('br-ref').value.trim(),
+  if (!$('br-vend').value){ toast('Vendor required','err'); return; }
+  var lines = [];
+  var chks = document.querySelectorAll('#br-bills-list .br-chk');
+  for (var i=0;i<chks.length;i++){
+    if (!chks[i].checked) continue;
+    var row = chks[i].parentNode;
+    var amt = parseFloat(row.querySelector('.br-amt').value) || 0;
+    if (amt <= 0){ toast('Enter an amount for every ticked bill','err'); return; }
+    lines.push({billRef: chks[i].getAttribute('data-ref'), amount: amt});
+  }
+  if (!lines.length){ toast('Tick at least one bill','err'); return; }
+  var payload = {
     returnDate: $('br-date').value,
-    returnAmount: parseFloat($('br-amt').value)||0,
-    reason: $('br-notes').value
+    cnNo: $('br-cn').value.trim(),
+    notes: $('br-notes').value,
+    reason: '',
+    lines: lines
   };
-  if (!data.billRef){ toast('Bill reference required','err'); return; }
-  if (data.returnAmount <= 0){ toast('Return amount required','err'); return; }
-  callServer('recordBillReturn', [data], function(res){
-    if (!res || !res.success){ toast((res && res.message) || 'Failed','err'); return; }
-    toast('Credit note recorded ('+res.returnId+')', 'ok');
-    ['br-ref','br-amt','br-notes'].forEach(function(id){ $(id).value=''; });
+  callServer('recordBillReturnBatch', [payload], function(res){
+    if (!res){ toast('No response','err'); return; }
+    if (res.success){ toast(res.message || 'Credit notes recorded', 'ok'); }
+    else if (res.okCount > 0){
+      var firstErr = (res.results||[]).filter(function(r){ return !r.ok; })[0];
+      toast(res.message + (firstErr ? ' — ' + firstErr.message : ''), 'err');
+    } else {
+      toast(res.message || 'Failed', 'err');
+    }
+    $('br-notes').value = '';
+    $('br-cn').value = '';
+    brLoadBills();
+  });
+}
+
+// ── Credit Notes list ──────────────────────────────────────
+function brListLoad(){
+  var filters = {
+    vendorId: $('brl-vendor').value,
+    fy: $('brl-fy').value,
+    includeCancelled: $('brl-showcancel').checked
+  };
+  var body = document.querySelector('#brl-table tbody');
+  $('brl-status').textContent = 'Loading…';
+  body.innerHTML = '<tr><td colspan="9" class="muted">Loading…</td></tr>';
+  callServer('listBillReturns', [filters], function(res){
+    if (!res || !res.ok){
+      $('brl-status').textContent = 'Error: ' + ((res && res.error) || 'no response');
+      body.innerHTML = '<tr><td colspan="9" class="muted">Load failed</td></tr>';
+      return;
+    }
+    var rows = res.rows || [];
+    $('brl-status').textContent = rows.length + ' credit note' + (rows.length===1?'':'s');
+    if (!rows.length){ body.innerHTML = '<tr><td colspan="9" class="muted">No credit notes</td></tr>'; return; }
+    body.innerHTML = rows.map(function(r){
+      var status = r.cancelled
+        ? '<span style="color:#B91C1C; font-weight:600;">Cancelled</span>'
+        : '<span style="color:#15803D; font-weight:600;">Active</span>';
+      var actions = r.cancelled ? '—' :
+        ('<button class="btn btn--xs btn--ghost" onclick="brEditDlg(\''+r.id+'\')">Edit</button> ' +
+         '<button class="btn btn--xs" style="background:#DC2626;" onclick="brCancel(\''+r.id+'\')">Cancel</button>');
+      return '<tr>' +
+        '<td>'+r.id+'</td>' +
+        '<td>'+(r.cnNo || '—')+'</td>' +
+        '<td>'+r.vendorName+'</td>' +
+        '<td>'+r.date+'</td>' +
+        '<td>'+r.billId+'</td>' +
+        '<td class="num">₹'+(r.amount||0).toLocaleString('en-IN')+'</td>' +
+        '<td>'+(r.reason || '')+'</td>' +
+        '<td>'+status+'</td>' +
+        '<td>'+actions+'</td>' +
+      '</tr>';
+    }).join('');
+  });
+}
+
+function brCancel(id){
+  var reason = prompt('Reason for cancelling credit note ' + id + '?');
+  if (reason === null) return;
+  callServer('cancelBillReturn', [id, reason], function(res){
+    if (!res || !res.success){ toast((res && res.message) || 'Cancel failed','err'); return; }
+    toast('Credit note ' + id + ' cancelled; bill outstanding restored.','ok');
+    brListLoad();
+  });
+}
+
+function brEditDlg(id){
+  // Minimal prompt-based edit: CN No, Reason, Notes. Amount is NOT editable
+  // (cancel + re-create instead, to keep bill-outstanding reconciliation simple).
+  var cn = prompt('Vendor CN # (leave blank to clear):', '');
+  if (cn === null) return;
+  var reason = prompt('Reason (leave blank to keep):', '');
+  if (reason === null) return;
+  var notes = prompt('Notes (leave blank to keep):', '');
+  if (notes === null) return;
+  var patches = {};
+  if (cn !== '') patches.cnNo = cn;
+  if (reason !== '') patches.reason = reason;
+  if (notes !== '') patches.notes = notes;
+  if (!Object.keys(patches).length){ toast('Nothing to update','ok'); return; }
+  callServer('updateBillReturn', [id, patches], function(res){
+    if (!res || !res.success){ toast((res && res.message) || 'Update failed','err'); return; }
+    toast('Credit note ' + id + ' updated','ok');
+    brListLoad();
   });
 }
 

@@ -1,0 +1,19 @@
+{
+  "timeZone": "Asia/Kolkata",
+  "dependencies": {
+    "libraries": [
+      {
+        "userSymbol": "Masters",
+        "version": "12",
+        "libraryId": "1zWL2xvoZIZ1HAk-RrngKIeA4Ps4fdByYW9_hsMEm8lMPA2P8rOgTzSxC",
+        "developmentMode": false
+      }
+    ]
+  },
+  "webapp": {
+    "executeAs": "USER_DEPLOYING",
+    "access": "ANYONE_ANONYMOUS"
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8"
+}

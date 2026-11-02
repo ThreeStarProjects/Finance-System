@@ -476,6 +476,8 @@ function dashKpis(filters){
       gstOutput:_round(gstOutput), gstInput:_round(gstInput), gstNet:_round(gstOutput - gstInput),
       // Bill-specific breakdown for the split "Booked vs Paid" KPI cards.
       billsBooked:_round(billsBooked), billsPaid:_round(billsPaidCash), billsUnpaid:_round(billsUnpaidTotal),
+      // Credit notes received this FY (vendor returns). Net Billed = billsBooked − creditNotesReceived.
+      creditNotesReceived: (typeof getCreditNotesTotalFy === 'function') ? getCreditNotesTotalFy(fy) : 0,
       // Total Expense breakdown so operators see where the number comes from:
       // Total Expense (Billed) = billsBooked + directExpense + unBilledVendorPay
       directExpense:_round(directExpense), unBilledVendorPay:_round(unBilledVendorPay)
@@ -949,10 +951,17 @@ function dashTopVendors(filters){
       // Prefer a non-empty name if the first row had the ID with a blank name
       if (!map[key].party && name) map[key].party = name;
     });
+    // Pull per-vendor credit notes to show NET amount (what you really owed/paid).
+    var cnByVendor = (typeof getCreditNotesByVendorFy === 'function') ? getCreditNotesByVendorFy(fy) : {};
     var vendors = Object.keys(map).map(function(k){
       var v = map[k];
-      return {vendorId:v.vendorId, party:v.party, amount:_round(v.amount),
-              outstanding:_round(v.outstanding), count:v.count};
+      var cn = cnByVendor[v.vendorId] || 0;
+      return {vendorId:v.vendorId, party:v.party,
+              amount:_round(v.amount - cn),               // NET of credit notes
+              gross:_round(v.amount),                      // original gross for reference
+              creditNotes:_round(cn),
+              outstanding:_round(v.outstanding),
+              count:v.count};
     }).sort(function(a,b){ return b.amount - a.amount; }).slice(0, limit);
     return _envOk({ fy:fy, vendors:vendors });
   } catch(e){ return _envErr(e); }
@@ -1671,7 +1680,9 @@ function getAPReconciliation(fy){
       totalPaidCash:       _round(totalPaidCash),       // = Bills Paid in dashKpis
       paidToCurFyBills:    _round(paidToCurFyBills),
       paidToPriorFyBills:  _round(paidToPriorFyBills),  // hidden chunk inside Bills Paid
-      paidUnapplied:       _round(paidUnapplied)
+      paidUnapplied:       _round(paidUnapplied),
+      // Vendor-returns side: credit notes received this FY. Net Billed = billed − creditNotesReceived.
+      creditNotesReceived: (typeof getCreditNotesTotalFy === 'function') ? getCreditNotesTotalFy(fy) : 0
     });
   } catch(e){ return _envErr(e); }
 }

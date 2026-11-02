@@ -326,6 +326,7 @@ function getVendorOpenBills(vendorId){
       var outstanding = _n(r[BC.OUTSTANDING]);
       if (outstanding <= 0) continue;
       out.push({
+        id: _s(r[BC.ID]),                       // added for credit-note picker
         no: _s(r[BC.BILL_NO]),
         date: Utilities.formatDate(_asDate(r[BC.BILL_DATE]),'GMT+5:30','yyyy-MM-dd'),
         total: _n(r[BC.TOTAL]),

@@ -2595,6 +2595,11 @@ function _computeProjectCostExGst(project, fy){
   // allocation's share of the bill's gross AMOUNT, so ex-GST figures stay
   // proportional. Bills with no allocations keep legacy Bill.Project matching.
   var allocMapEx = (typeof _getAllBillAllocationsMap === 'function') ? _getAllBillAllocationsMap() : {};
+  // Credit notes received against bills tagged to this project (if any).
+  // Subtract them so project cost nets out the returns. GST-aware fallback:
+  // credit note Amount is gross; use CN Taxable when available, else scale
+  // Amount by the bill's taxable/gross ratio.
+  var cnByBill = (typeof getCreditNotesByBillId === 'function') ? getCreditNotesByBillId(fy) : {};
   var billsSheet = _getSS().getSheetByName(AP.BILLS);
   if (billsSheet && billsSheet.getLastRow() > 1){
     var bW = billsSheet.getLastColumn();
@@ -2606,17 +2611,21 @@ function _computeProjectCostExGst(project, fy){
       var bid     = _s(r[BC.ID]);
       var baseAmt = _n(r[BC.TAXABLE]) || _n(r[BC.AMOUNT]) || 0;  // ex-GST preferred
       var gross   = _n(r[BC.AMOUNT]) || 0;
+      // Net the bill's ex-GST base down by any credit notes against this bill.
+      // Scale CN gross → ex-GST using the bill's own base/gross ratio.
+      var cnGross = _n(cnByBill[bid]) || 0;
+      var cnBaseShare = (gross > 0 && cnGross > 0) ? (cnGross * (baseAmt / gross)) : 0;
+      var netBase = Math.max(0, baseAmt - cnBaseShare);
       var allocs  = allocMapEx[bid];
       if (allocs && allocs.length){
-        // Scale base proportionally to each allocation's share of gross.
         allocs.forEach(function(a){
           if (a.project !== project) return;
           var share = gross > 0 ? (a.amount / gross) : 0;
-          total += baseAmt * share;
+          total += netBase * share;
         });
       } else {
         if (_s(r[BC.PROJECT]) !== project) return;
-        total += baseAmt;
+        total += netBase;
       }
     });
   }

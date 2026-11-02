@@ -6214,7 +6214,8 @@ function _xlsxBlob(sheetName, rows, boldRows, widths){
     }).join('') + '</row>';
   }).join('');
   var cols = '<cols>' + widths.map(function(w,i){ return '<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>'; }).join('') + '</cols>';
-  var H = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  // Split on purpose: the literal angle-bracket + question-mark pair is parsed as a server scriptlet by HtmlService templates.
+  var H = '<' + '?xml version="1.0" encoding="UTF-8" standalone="yes"?' + '>';
   var NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
   var RN = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   return _zipStore([

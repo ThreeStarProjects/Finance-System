@@ -272,12 +272,14 @@ function IM_prepareCostImport() {
       var sr = r[0], reqNo = r[1], proj = String(r[3] || ''), code = r[4], qty = Number(r[6]);
       if (!reqNo || !code || !(qty > 0)) return;
       var m = /PRJ-\d+/i.exec(proj);
-      if (!m) { noPrj++; var nm = proj.trim() || '(blank)'; ignored[nm] = (ignored[nm] || 0) + 1; return; }
+      // Old requisitions carry a plain site/project name: the exact text (upper-cased) is the map key,
+      // so it is paired with a Finance project once by hand and remembered. Never fuzzy-matched.
+      if (!m && !proj.trim()) { noPrj++; ignored['(blank)'] = (ignored['(blank)'] || 0) + 1; return; }
       var key = 'IMS:' + reqNo + ':SR' + sr;
       if (done[key]) return;
-      var prj = m[0].toUpperCase(), it = rates[code] || {}, old = kept[key];
+      var prj = m ? m[0].toUpperCase() : proj.trim().toUpperCase(), it = rates[code] || {}, old = kept[key];
       var rate = it.rate > 0 ? it.rate : (old && Number(old[IMC.RATE]) > 0 ? Number(old[IMC.RATE]) : '');
-      var fin = (old && old[IMC.FINPROJ]) || map[prj] || IM_guessFinanceProject_(prj, names);
+      var fin = (old && old[IMC.FINPROJ]) || map[prj] || (m ? IM_guessFinanceProject_(prj, names) : '');
       var sub = (old && old[IMC.SUBCAT]) || lastSub;
       var tick = old ? old[IMC.POST] === true : !!(fin && rate > 0);
       rows.push([tick, reqNo, IM_dateStr_(r[2]), proj, prj, code, it.name || r[5], qty, r[7], rate, '', fin, sub, key,
@@ -285,6 +287,7 @@ function IM_prepareCostImport() {
     });
   }
 
+  rows.sort(function (a, b) { return a[IMC.PRJ] < b[IMC.PRJ] ? -1 : a[IMC.PRJ] > b[IMC.PRJ] ? 1 : 0; });  // grouped by project: pick once, fill down
   sh.clear();
   sh.getRange(1, 1, 1, IM_COST_HEADERS.length).setValues([IM_COST_HEADERS]).setFontWeight('bold');
   sh.setFrozenRows(1);
@@ -310,9 +313,7 @@ function IM_prepareCostImport() {
   ui.alert('IMS material costs',
     rows.length + ' unbooked requisition line(s) loaded; ' + ready + ' ticked and ready.\n' +
     (rows.length - ready ? (rows.length - ready) + ' need a Finance project, a rate or your tick.\n' : '') +
-    (noPrj ? noPrj + ' line(s) ignored: the requisition Project has no PRJ-### id. Most common:\n' +
-      Object.keys(ignored).sort(function (a, b) { return ignored[b] - ignored[a]; }).slice(0, 8)
-        .map(function (n) { return '   ' + n + ' ×' + ignored[n]; }).join('\n') + '\n' : '') +
+    (noPrj ? noPrj + ' line(s) ignored: the requisition has no Project at all.\n' : '') +
     '\nReview the "' + IM_COST_SHEET + '" sheet, then run "2. Post ticked lines".', ui.ButtonSet.OK);
 }
 

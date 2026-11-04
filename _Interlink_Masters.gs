@@ -266,13 +266,13 @@ function IM_prepareCostImport() {
     });
   }
 
-  var rows = [], noPrj = 0;
+  var rows = [], noPrj = 0, ignored = {};  // ignored: project text without a PRJ-### id → line count
   if (req.getLastRow() >= 2) {
     req.getRange(2, 1, req.getLastRow() - 1, 8).getValues().forEach(function (r) {
       var sr = r[0], reqNo = r[1], proj = String(r[3] || ''), code = r[4], qty = Number(r[6]);
       if (!reqNo || !code || !(qty > 0)) return;
       var m = /PRJ-\d+/i.exec(proj);
-      if (!m) { noPrj++; return; }
+      if (!m) { noPrj++; var nm = proj.trim() || '(blank)'; ignored[nm] = (ignored[nm] || 0) + 1; return; }
       var key = 'IMS:' + reqNo + ':SR' + sr;
       if (done[key]) return;
       var prj = m[0].toUpperCase(), it = rates[code] || {}, old = kept[key];
@@ -310,7 +310,9 @@ function IM_prepareCostImport() {
   ui.alert('IMS material costs',
     rows.length + ' unbooked requisition line(s) loaded; ' + ready + ' ticked and ready.\n' +
     (rows.length - ready ? (rows.length - ready) + ' need a Finance project, a rate or your tick.\n' : '') +
-    (noPrj ? noPrj + ' line(s) ignored: the requisition Project has no PRJ-### id.\n' : '') +
+    (noPrj ? noPrj + ' line(s) ignored: the requisition Project has no PRJ-### id. Most common:\n' +
+      Object.keys(ignored).sort(function (a, b) { return ignored[b] - ignored[a]; }).slice(0, 8)
+        .map(function (n) { return '   ' + n + ' ×' + ignored[n]; }).join('\n') + '\n' : '') +
     '\nReview the "' + IM_COST_SHEET + '" sheet, then run "2. Post ticked lines".', ui.ButtonSet.OK);
 }
 

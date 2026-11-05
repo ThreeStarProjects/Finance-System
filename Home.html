@@ -2900,8 +2900,8 @@ function _paintTotalExpenses(){
 }
 
 // Customers Owe You sub-text — joins dashKpis line (open count + overdue) with
-// the AR reconciliation (Invoiced − Received − Prior-FY = Outstanding, plus the
-// unapplied-advances parallel bucket). Paints as each side lands, so the line
+// the AR reconciliation (Invoiced − Received − Prior-FY = Outstanding).
+// Paints as each side lands, so the line
 // appears early and sharpens when the recon call returns.
 function _paintARSub(){
   var s = DASH_STATE; if (!s) return;
@@ -2924,13 +2924,8 @@ function _paintARSub(){
   }
   rows.push(_rrow('=', '₹' + fmt(r.outstanding) + ' still outstanding', 'total'));
 
-  var note = (r.unapplied || 0) > 0
-    ? '<div class="kpi__recon__note">Plus ₹' + fmt(r.unapplied)
-      + ' customer advances held for future invoices (not deducted from outstanding).</div>'
-    : '';
-
   sub.innerHTML = esc(line1) +
-    '<div class="kpi__recon">' + rows.join('') + note + '</div>';
+    '<div class="kpi__recon">' + rows.join('') + '</div>';
 }
 
 // Row renderer for a reconciliation line. bullet: '+', '−', '=' or '•'.

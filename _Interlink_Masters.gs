@@ -130,6 +130,7 @@ function IM_onOpen_() {
     .addSeparator()
     .addItem('About',                          'IM_about_')
     .addToUi();
+  try { Masters.registerSystemSheet('finance', SpreadsheetApp.getActive().getId()); } catch (e) {}  // lets PM's project delete find this sheet
 }
 
 function IM_about_() {

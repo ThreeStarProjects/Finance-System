@@ -171,14 +171,17 @@ function IM_refreshDropdowns() {
 // Cost = IMS Item Master 'Avg Rate (Rs.)' x requisition qty, GST blank (GST was paid on the
 // purchase bill). Each booked row carries the key "IMS:REQ-0012:SR5" in Notes, so a line can
 // never be booked twice (a soft-deleted cost row frees its line to be booked again).
-// The PRJ-### -> Finance project pairing is remembered in IMS_Project_Map; it is pre-filled
-// when exactly one Finance project label starts with that same PRJ-### id.
+// The PRJ-### (or old requisition text) -> Finance project pairing is remembered in Masters
+// (sheet Project_Map, via Masters.getProjectMap / saveProjectMap), so every system sees one answer;
+// it is pre-filled when exactly one Finance project label starts with that same PRJ-### id.
+// A local IMS_Project_Map sheet from before the move is copied into Masters on the next Prepare,
+// then renamed and hidden.
 // Vendor bills tagged "Count in project cost" must not cover stock that is also issued via
 // requisitions, or the same material is counted twice.
 // =============================================================================
 var IM_IMS_SHEET_ID = '1CglvPxUWZnIHNeToGEDz8-Xj3eNfvaF351j_ogpRTgk';
 var IM_COST_SHEET   = 'IMS_Cost_Import';
-var IM_MAP_SHEET    = 'IMS_Project_Map';
+var IM_MAP_SHEET    = 'IMS_Project_Map';  // legacy local copy, moved into Masters by IM_migrateProjectMap_
 var IM_COST_HEADERS = ['Post?', 'Requisition', 'Date', 'IMS Project', 'PRJ', 'Item Code', 'Item', 'Qty', 'Unit',
                        'Avg Rate', 'Amount', 'Finance Project', 'Subcategory', 'Key', 'Status'];
 // 0-based indexes into a review-sheet row
@@ -215,26 +218,28 @@ function IM_dateStr_(d) {
   return d instanceof Date ? Utilities.formatDate(d, 'GMT+5:30', 'yyyy-MM-dd') : String(d || '');
 }
 
+/** { KEY: 'Finance project label' } from Masters (keys upper-cased). */
 function IM_readProjectMap_() {
-  var out = {};
-  var sh = SpreadsheetApp.getActive().getSheetByName(IM_MAP_SHEET);
-  if (!sh || sh.getLastRow() < 2) return out;
-  sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) { if (r[0] && r[1]) out[String(r[0]).toUpperCase()] = String(r[1]); });
-  return out;
+  return Masters.getProjectMap() || {};
 }
 
-/** pairs: { 'PRJ-001': 'Finance project label' } → upsert into IMS_Project_Map. */
+/** pairs: { 'PRJ-001': 'Finance project label' } → upsert into the Masters Project_Map. */
 function IM_saveProjectMap_(pairs) {
+  Masters.saveProjectMap(pairs);
+}
+
+/** Copy a leftover local IMS_Project_Map sheet into Masters once, then rename + hide it. Returns pairs moved. */
+function IM_migrateProjectMap_() {
   var ss = SpreadsheetApp.getActive();
-  var sh = ss.getSheetByName(IM_MAP_SHEET) || ss.insertSheet(IM_MAP_SHEET);
-  if (sh.getLastRow() < 1) sh.getRange(1, 1, 1, 2).setValues([['PRJ', 'Finance Project']]).setFontWeight('bold');
-  var rows = sh.getLastRow() >= 2 ? sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues() : [];
-  Object.keys(pairs).forEach(function (prj) {
-    var at = -1;
-    rows.forEach(function (r, i) { if (String(r[0]).toUpperCase() === prj) at = i; });
-    if (at >= 0) sh.getRange(at + 2, 2).setValue(pairs[prj]);
-    else { sh.getRange(rows.length + 2, 1, 1, 2).setValues([[prj, pairs[prj]]]); rows.push([prj, pairs[prj]]); }
+  var sh = ss.getSheetByName(IM_MAP_SHEET);
+  if (!sh) return 0;
+  var pairs = {}, n = 0;
+  if (sh.getLastRow() >= 2) sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) {
+    if (r[0] && r[1]) { pairs[String(r[0]).toUpperCase()] = String(r[1]); n++; }
   });
+  if (n) Masters.saveProjectMap(pairs);  // throws if Masters is unreachable: the sheet stays as it is
+  sh.setName('_old ' + IM_MAP_SHEET); sh.hideSheet();
+  return n;
 }
 
 /** Pre-fill: the one Finance project label that starts with this exact PRJ-### id, else ''. */
@@ -252,6 +257,7 @@ function IM_prepareCostImport() {
 
   var done = IM_postedKeys_();
   var rates = IM_avgRates_(items);
+  IM_migrateProjectMap_();
   var map = IM_readProjectMap_();
   var names = (typeof getProjectNames === 'function') ? (getProjectNames() || []) : [];
   var props = PropertiesService.getScriptProperties();
@@ -369,7 +375,8 @@ function IM_postCostImport() {
     sh.getRange(at[k], IMC.POST + 1).setValue(false);
     pairs[String(vals[at[k] - 2][IMC.PRJ]).toUpperCase()] = entries[k].project;
   });
-  IM_saveProjectMap_(pairs);
+  try { IM_saveProjectMap_(pairs); }
+  catch (e) { ss.toast('Booked, but the project pairing could not be saved to Masters: ' + e.message, 'IMS material costs', 10); }
   var lastSub = String(vals[at[at.length - 1] - 2][IMC.SUBCAT] || '');
   if (lastSub) PropertiesService.getScriptProperties().setProperty('IM_LAST_SUBCAT', lastSub);
   ui.alert('Booked ' + res.count + ' line(s), ₹' + total.toFixed(2) + '. They appear in Project_Costs as Pending (' + res.ids[0] +

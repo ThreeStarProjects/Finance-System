@@ -125,12 +125,12 @@ function IM_onOpen_() {
     .addItem('Refresh dropdowns from Masters', 'IM_refreshDropdowns')
     .addItem('Clear Masters cache',            'IM_clearCache')
     .addSeparator()
-    .addItem('IMS material costs: 1. Prepare', 'IM_prepareCostImport')
-    .addItem('IMS material costs: 2. Post ticked lines', 'IM_postCostImport')
+    .addItem('IMS material costs: import now', 'IM_importImsCostsNow')
     .addSeparator()
     .addItem('About',                          'IM_about_')
     .addToUi();
   try { Masters.registerSystemSheet('finance', SpreadsheetApp.getActive().getId()); } catch (e) {}  // lets PM's project delete find this sheet
+  try { IM_ensureImportTrigger_(); } catch (e) {}  // self-heal the 10-minute IMS cost import
 }
 
 function IM_about_() {
@@ -161,43 +161,44 @@ function IM_refreshDropdowns() {
 }
 
 // =============================================================================
-// Phase 7 — IMS material costs → Project_Costs
-// Finance PULLS; nothing else ever writes into this workbook. Material that a project
-// drew from IMS stock (Material Requisition lines) is booked as a 'Material' cost.
-//   1. IM_prepareCostImport  reads IMS requisitions that are not booked yet into the review
-//                            sheet IMS_Cost_Import (one row per requisition line).
-//   2. You review: tick lines, pick the Finance project and Subcategory, fix a rate if needed.
-//   3. IM_postCostImport     books the ticked lines through submitProjectCosts() (Finance's own
-//                            ID / category / GST rules; Status Pending like any cost entry).
-// Cost = IMS Item Master 'Avg Rate (Rs.)' x requisition qty, GST blank (GST was paid on the
-// purchase bill). Each booked row carries the key "IMS:REQ-0012:SR5" in Notes, so a line can
-// never be booked twice (a soft-deleted cost row frees its line to be booked again).
-// The PRJ-### (or old requisition text) -> Finance project pairing is remembered in Masters
-// (sheet Project_Map, via Masters.getProjectMap / saveProjectMap), so every system sees one answer;
-// it is pre-filled when exactly one Finance project label starts with that same PRJ-### id.
-// A local IMS_Project_Map sheet from before the move is copied into Masters on the next Prepare,
-// then renamed and hidden.
+// Phase 7 (v2) — IMS material costs → Project_Costs: automatic, grouped
+// Finance PULLS (a time trigger every 10 min, on open, and 🔗 Interlink → import now); nothing
+// else writes into this workbook. Material a project drew from IMS stock (Material Requisition lines)
+// becomes a 'Material' cost.
+//
+//  * PM / Masters is the only truth for project names: a requisition counts when its Project BEGINS
+//    with a PRJ-### id (the label picked from the IMS dropdown). The Finance project is the Masters
+//    label "PRJ-001 — Name"; no pairing with IMS or Finance names is needed. The project is added to
+//    M_Project (Code PRJ-001, Name) when Finance has no project with that code yet.
+//  * Many partial issues do NOT create many rows: one Project_Costs row per project + item, which
+//    grows (qty and amount) as more is issued. Note key "IMS:PRJ-001:ITEMCODE#1".
+//  * Every requisition line is priced once and frozen in the hidden sheet IMS_Cost_Log (qty x the IMS
+//    'Avg Rate (Rs.)' of that moment, GST 0 since GST was paid on the purchase bill), so a later rate
+//    change never rewrites old cost and nothing is ever counted twice.
+//  * A group row is only updated while its Status is Pending. Once approved / rejected (or soft
+//    deleted) it is never changed; later issues of that item go to a new row "#2".
+//  * Lines with no Avg Rate yet, or for a PRJ id Masters does not know, wait and are retried.
+//  * Lines already booked by the old per-line import (key "IMS:REQ-0012:SR5") are skipped.
 // Vendor bills tagged "Count in project cost" must not cover stock that is also issued via
 // requisitions, or the same material is counted twice.
+// One-time: run IM_installImportTrigger() from the editor (creates the 10-minute trigger).
 // =============================================================================
 var IM_IMS_SHEET_ID = '1CglvPxUWZnIHNeToGEDz8-Xj3eNfvaF351j_ogpRTgk';
-var IM_COST_SHEET   = 'IMS_Cost_Import';
-var IM_MAP_SHEET    = 'IMS_Project_Map';  // legacy local copy, moved into Masters by IM_migrateProjectMap_
-var IM_COST_HEADERS = ['Post?', 'Requisition', 'Date', 'IMS Project', 'PRJ', 'Item Code', 'Item', 'Qty', 'Unit',
-                       'Avg Rate', 'Amount', 'Finance Project', 'Subcategory', 'Key', 'Status'];
-// 0-based indexes into a review-sheet row
-var IMC = { POST: 0, REQ: 1, DATE: 2, IMSPROJ: 3, PRJ: 4, CODE: 5, ITEM: 6, QTY: 7, UNIT: 8,
-            RATE: 9, AMOUNT: 10, FINPROJ: 11, SUBCAT: 12, KEY: 13, STATUS: 14 };
+var IM_LOG_SHEET    = 'IMS_Cost_Log';
+var IM_LOG_HEAD     = ['Line', 'Date', 'Project', 'Item Code', 'Item', 'Qty', 'Unit', 'Rate', 'Amount', 'Group', 'Status'];
+var IML = { LINE: 0, DATE: 1, PRJ: 2, CODE: 3, ITEM: 4, QTY: 5, UNIT: 6, RATE: 7, AMOUNT: 8, GROUP: 9, STATUS: 10 };
+var IM_IMPORT_FN    = 'IM_importImsCostsTrigger';
+var IM_IMPORT_MINUTES = 10;
 
-/** Keys ("IMS:REQ-0012:SR5") of IMS lines already booked in Project_Costs. Soft-deleted rows don't count. */
-function IM_postedKeys_() {
+/** Keys ("IMS:REQ-0012:SR5") booked line-by-line by the old import. Soft-deleted rows don't count. */
+function IM_legacyKeys_() {
   var out = {};
   var sh = _getProjectCostsSheet();
   if (!sh || sh.getLastRow() < 2) return out;
   var width = Math.min(sh.getLastColumn(), PCC_TOTAL);
   sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues().forEach(function (r) {
     var note = _s(r[PCC.NOTES]);
-    if (note.indexOf('IMS:') === 0 && _s(r[PCC.DELETED]) !== 'Yes') out[note] = _s(r[PCC.ID]);
+    if (note.indexOf('IMS:REQ-') === 0 && _s(r[PCC.DELETED]) !== 'Yes') out[note] = true;
   });
   return out;
 }
@@ -219,167 +220,199 @@ function IM_dateStr_(d) {
   return d instanceof Date ? Utilities.formatDate(d, 'GMT+5:30', 'yyyy-MM-dd') : String(d || '');
 }
 
-/** { KEY: 'Finance project label' } from Masters (keys upper-cased). */
-function IM_readProjectMap_() {
-  return Masters.getProjectMap() || {};
-}
+function IM_round_(n, p) { var k = Math.pow(10, p); return Math.round(n * k) / k; }
 
-/** pairs: { 'PRJ-001': 'Finance project label' } → upsert into the Masters Project_Map. */
-function IM_saveProjectMap_(pairs) {
-  Masters.saveProjectMap(pairs);
-}
-
-/** Copy a leftover local IMS_Project_Map sheet into Masters once, then rename + hide it. Returns pairs moved. */
-function IM_migrateProjectMap_() {
+function IM_logSheet_() {
   var ss = SpreadsheetApp.getActive();
-  var sh = ss.getSheetByName(IM_MAP_SHEET);
-  if (!sh) return 0;
-  var pairs = {}, n = 0;
-  if (sh.getLastRow() >= 2) sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) {
-    if (r[0] && r[1]) { pairs[String(r[0]).toUpperCase()] = String(r[1]); n++; }
+  var sh = ss.getSheetByName(IM_LOG_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(IM_LOG_SHEET);
+    sh.getRange(1, 1, 1, IM_LOG_HEAD.length).setValues([IM_LOG_HEAD]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    sh.hideSheet();
+  }
+  return sh;
+}
+
+/** Existing group rows in Project_Costs: { groupKey → { row, status, deleted } } and { "PRJ|CODE" → highest #n }. */
+function IM_groupRows_() {
+  var byKey = {}, top = {};
+  var sh = _getProjectCostsSheet();
+  if (!sh || sh.getLastRow() < 2) return { byKey: byKey, top: top };
+  var width = Math.min(sh.getLastColumn(), PCC_TOTAL);
+  sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues().forEach(function (r, i) {
+    var m = /^IMS:(PRJ-\d+):(.+)#(\d+)$/.exec(_s(r[PCC.NOTES]));
+    if (!m) return;
+    byKey[m[0]] = { row: i + 2, status: _s(r[PCC.STATUS]), deleted: _s(r[PCC.DELETED]) === 'Yes' };
+    var k = m[1] + '|' + m[2], n = parseInt(m[3], 10);
+    if (!top[k] || n > top[k].n) top[k] = { n: n, key: m[0] };
   });
-  if (n) Masters.saveProjectMap(pairs);  // throws if Masters is unreachable: the sheet stays as it is
-  sh.setName('_old ' + IM_MAP_SHEET); sh.hideSheet();
-  return n;
+  return { byKey: byKey, top: top };
 }
 
-/** Pre-fill: the one Finance project label that starts with this exact PRJ-### id, else ''. */
-function IM_guessFinanceProject_(prj, names) {
-  var hit = names.filter(function (n) { var u = String(n).toUpperCase(); return u === prj || u.indexOf(prj + ' ') === 0; });
-  return hit.length === 1 ? hit[0] : '';
+/** Add PRJ-### to Finance's M_Project (Code | Name | Active) unless a project with that code exists. Returns a warning or ''. */
+function IM_ensureFinanceProject_(prj, name) {
+  var sh = _getSS().getSheetByName(P.PROJECT);
+  if (!sh) return '';
+  var rows = sh.getLastRow() >= 2 ? sh.getRange(2, 1, sh.getLastRow() - 1, PRC_TOTAL).getValues() : [];
+  for (var i = 0; i < rows.length; i++) {
+    if (_s(rows[i][PRC.CODE]).toUpperCase() === prj) {
+      return _s(rows[i][PRC.NAME]) === name ? '' : 'Finance already has code ' + prj + ' for "' + _s(rows[i][PRC.NAME]) + '" (Masters: "' + name + '")';
+    }
+  }
+  var row = new Array(PRC_TOTAL).fill('');
+  row[PRC.CODE] = prj; row[PRC.NAME] = name; row[PRC.ACTIVE] = 'Yes';
+  sh.getRange(sh.getLastRow() + 1, 1, 1, PRC_TOTAL).setValues([row]);
+  return '';
 }
 
-/** Step 1: IMS requisition lines not yet booked → review sheet. */
-function IM_prepareCostImport() {
-  var ss = SpreadsheetApp.getActive(), ui = SpreadsheetApp.getUi();
+/** The import. Safe to run any time, as often as you like: it only ever adds what is new. */
+function IM_importImsCosts() {
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(20000)) return { busy: true };
+  try { return IM_importImsCostsLocked_(); } finally { lock.releaseLock(); }
+}
+
+function IM_importImsCostsLocked_() {
   var ims = SpreadsheetApp.openById(IM_IMS_SHEET_ID);
   var req = ims.getSheetByName('Material Requisition Register'), items = ims.getSheetByName('Item Master');
-  if (!req || !items) { ui.alert('IMS sheets not found (Material Requisition Register / Item Master).'); return; }
+  if (!req || !items) throw new Error('IMS sheets not found (Material Requisition Register / Item Master).');
+  var res = { newLines: 0, created: 0, updated: 0, closed: 0, waitingRate: 0, waitingProject: 0, warnings: [] };
 
-  var done = IM_postedKeys_();
-  var rates = IM_avgRates_(items);
-  IM_migrateProjectMap_();
-  var map = IM_readProjectMap_();
-  var names = (typeof getProjectNames === 'function') ? (getProjectNames() || []) : [];
-  var props = PropertiesService.getScriptProperties();
-  var lastSub = props.getProperty('IM_LAST_SUBCAT') || '';
+  var names = {};  // PRJ-### → Masters name
+  (Masters.getProjects() || []).forEach(function (p) { names[String(p.Project_ID).toUpperCase()] = String(p.Name); });
+  var rates = IM_avgRates_(items), legacy = IM_legacyKeys_();
 
-  // keep what the user already chose on an earlier Prepare (by line key)
-  var sh = ss.getSheetByName(IM_COST_SHEET) || ss.insertSheet(IM_COST_SHEET);
-  var kept = {};
-  if (sh.getLastRow() >= 2) {
-    sh.getRange(2, 1, sh.getLastRow() - 1, IM_COST_HEADERS.length).getValues().forEach(function (r) {
-      if (r[IMC.KEY] && !/^Posted/.test(String(r[IMC.STATUS]))) kept[r[IMC.KEY]] = r;
-    });
+  // 1. the PRJ requisition lines IMS has right now
+  var lines = [], present = {};
+  if (req.getLastRow() >= 2) req.getRange(2, 1, req.getLastRow() - 1, 8).getValues().forEach(function (r) {
+    var reqNo = r[1], code = r[4], qty = Number(r[6]), m = /^PRJ-\d+/i.exec(String(r[3] || '').trim());
+    if (!reqNo || !code || !(qty > 0) || !m) return;
+    var key = reqNo + ':SR' + r[0];
+    present[key] = true;
+    lines.push({ key: key, date: IM_dateStr_(r[2]), prj: m[0].toUpperCase(), code: code, qty: qty, unit: r[7],
+                 item: (rates[code] && rates[code].name) || r[5] || code });
+  });
+
+  // 2. price + group the lines not seen before
+  var log = IM_logSheet_();
+  var logRows = log.getLastRow() >= 2 ? log.getRange(2, 1, log.getLastRow() - 1, IM_LOG_HEAD.length).getValues() : [];
+  var seen = {}; logRows.forEach(function (r) { seen[r[IML.LINE]] = true; });
+  var groups = IM_groupRows_();
+  var open = {};  // "PRJ|CODE" → { key, n } the group new lines go to
+  Object.keys(groups.top).forEach(function (k) {
+    var g = groups.byKey[groups.top[k].key];
+    if (g && !g.deleted && g.status === 'Pending') open[k] = groups.top[k];
+  });
+  var newRows = [];
+  lines.forEach(function (l) {
+    if (seen[l.key]) return;
+    if (legacy['IMS:' + l.key]) { newRows.push([l.key, l.date, l.prj, l.code, l.item, l.qty, l.unit, '', '', '', 'Legacy']); return; }
+    if (!names[l.prj]) { res.waitingProject++; return; }
+    var rate = rates[l.code] ? rates[l.code].rate : 0;
+    if (!(rate > 0)) { res.waitingRate++; return; }
+    var k = l.prj + '|' + l.code;
+    if (!open[k]) {
+      var n = groups.top[k] ? groups.top[k].n + 1 : 1;
+      open[k] = { n: n, key: 'IMS:' + l.prj + ':' + l.code + '#' + n };
+      groups.top[k] = open[k];
+    }
+    newRows.push([l.key, l.date, l.prj, l.code, l.item, l.qty, l.unit, rate, IM_round_(l.qty * rate, 2), open[k].key, 'Imported']);
+  });
+  if (newRows.length) {
+    log.getRange(log.getLastRow() + 1, 1, newRows.length, IM_LOG_HEAD.length).setValues(newRows);
+    res.newLines = newRows.filter(function (r) { return r[IML.STATUS] === 'Imported'; }).length;
   }
 
-  var rows = [], noPrj = 0, ignored = {};  // ignored: project text without a PRJ-### id → line count
-  if (req.getLastRow() >= 2) {
-    req.getRange(2, 1, req.getLastRow() - 1, 8).getValues().forEach(function (r) {
-      var sr = r[0], reqNo = r[1], proj = String(r[3] || ''), code = r[4], qty = Number(r[6]);
-      if (!reqNo || !code || !(qty > 0)) return;
-      var m = /PRJ-\d+/i.exec(proj);
-      // Old requisitions carry a plain site/project name: the exact text (upper-cased) is the map key,
-      // so it is paired with a Finance project once by hand and remembered. Never fuzzy-matched.
-      if (!m && !proj.trim()) { noPrj++; ignored['(blank)'] = (ignored['(blank)'] || 0) + 1; return; }
-      var key = 'IMS:' + reqNo + ':SR' + sr;
-      if (done[key]) return;
-      var prj = m ? m[0].toUpperCase() : proj.trim().toUpperCase(), it = rates[code] || {}, old = kept[key];
-      var rate = it.rate > 0 ? it.rate : (old && Number(old[IMC.RATE]) > 0 ? Number(old[IMC.RATE]) : '');
-      var fin = (old && old[IMC.FINPROJ]) || map[prj] || (m ? IM_guessFinanceProject_(prj, names) : '');
-      var sub = (old && old[IMC.SUBCAT]) || lastSub;
-      var tick = old ? old[IMC.POST] === true : !!(fin && rate > 0);
-      rows.push([tick, reqNo, IM_dateStr_(r[2]), proj, prj, code, it.name || r[5], qty, r[7], rate, '', fin, sub, key,
-                 rate > 0 ? '' : 'No Avg Rate in IMS: type a rate']);
-    });
+  // 3. every group row = the sum of its still-present logged lines
+  var all = logRows.concat(newRows), sums = {};
+  all.forEach(function (r) {
+    if (r[IML.STATUS] !== 'Imported') return;
+    var g = sums[r[IML.GROUP]] = sums[r[IML.GROUP]] || { key: r[IML.GROUP], prj: r[IML.PRJ], code: r[IML.CODE], item: r[IML.ITEM], unit: r[IML.UNIT], qty: 0, amount: 0, date: '', lines: 0 };
+    if (!present[r[IML.LINE]]) return;                       // removed from IMS since: no longer counts
+    g.qty += Number(r[IML.QTY]); g.amount += Number(r[IML.AMOUNT]); g.lines++;
+    if (String(r[IML.DATE]) > g.date) g.date = String(r[IML.DATE]);
+  });
+  var pc = _getProjectCostsSheet(), entries = [], touched = {};
+  var sub = PropertiesService.getScriptProperties().getProperty('IM_LAST_SUBCAT') || '';
+  Object.keys(sums).forEach(function (key) {
+    var g = sums[key], ex = groups.byKey[key];
+    g.qty = IM_round_(g.qty, 3); g.amount = IM_round_(g.amount, 2);
+    if (ex && (ex.deleted || ex.status !== 'Pending')) return;        // decided by a person: never touched
+    var desc = 'Issued from IMS stock · ' + g.lines + ' requisition line(s)';
+    if (ex) {
+      if (g.lines === 0) {                                              // every line was removed from IMS
+        pc.getRange(ex.row, PCC.DELETED + 1).setValue('Yes'); res.closed++; return;
+      }
+      var cur = pc.getRange(ex.row, 1, 1, PCC_TOTAL).getValues()[0];
+      if (Math.abs(Number(cur[PCC.QUANTITY]) - g.qty) < 0.0005 && Math.abs(Number(cur[PCC.AMOUNT]) - g.amount) < 0.005) return;  // unchanged
+      pc.getRange(ex.row, PCC.ENTRY_DATE + 1).setValue(g.date);
+      pc.getRange(ex.row, PCC.DESCRIPTION + 1).setValue(desc);
+      pc.getRange(ex.row, PCC.QUANTITY + 1).setValue(g.qty);
+      pc.getRange(ex.row, PCC.RATE_PER_UNIT + 1).setValue(g.qty ? g.amount / g.qty : 0);
+      pc.getRange(ex.row, PCC.AMOUNT_EX_GST + 1).setValue(g.amount);
+      pc.getRange(ex.row, PCC.AMOUNT + 1).setValue(g.amount);
+      res.updated++; touched[g.prj] = true;
+    } else if (g.lines > 0) {
+      entries.push({ entry_type: 'Material', project: g.prj + ' — ' + names[g.prj], entry_date: g.date, submitted_by: 'IMS import',
+        data: { materialName: String(g.item), quantity: g.qty, unit: String(g.unit), rate: g.amount / g.qty, gst_rate: 0,
+                subcategory: sub, description: desc, notes: g.key } });
+      touched[g.prj] = true;
+    }
+  });
+  if (entries.length) {
+    var out = submitProjectCosts(entries);
+    if (!out || !out.success) throw new Error('Finance did not accept the cost rows: ' + ((out && out.message) || 'error') + ' (nothing is lost: they are retried on the next run)');
+    res.created = out.count;
   }
-
-  rows.sort(function (a, b) { return a[IMC.PRJ] < b[IMC.PRJ] ? -1 : a[IMC.PRJ] > b[IMC.PRJ] ? 1 : 0; });  // grouped by project: pick once, fill down
-  sh.clear();
-  sh.getRange(1, 1, 1, IM_COST_HEADERS.length).setValues([IM_COST_HEADERS]).setFontWeight('bold');
-  sh.setFrozenRows(1);
-  if (rows.length) {
-    var n = rows.length;
-    sh.getRange(2, 1, n, IM_COST_HEADERS.length).setValues(rows);
-    var f = [];
-    for (var i = 0; i < n; i++) f.push(['=IF(AND(ISNUMBER(H' + (i + 2) + '),ISNUMBER(J' + (i + 2) + ')),H' + (i + 2) + '*J' + (i + 2) + ',"")']);
-    sh.getRange(2, IMC.AMOUNT + 1, n, 1).setFormulas(f).setNumberFormat('#,##0.00');
-    sh.getRange(2, IMC.POST + 1, n, 1).insertCheckboxes();
-    if (names.length) sh.getRange(2, IMC.FINPROJ + 1, n, 1).setDataValidation(
-      SpreadsheetApp.newDataValidation().requireValueInList(names, true).setAllowInvalid(false).build());
-    var cats = [];
-    try { cats = (getCategories() || []).map(function (c) { return c.category; }).filter(String); } catch (e) {}
-    if (cats.length) sh.getRange(2, IMC.SUBCAT + 1, n, 1).setDataValidation(
-      SpreadsheetApp.newDataValidation().requireValueInList(cats, true).setAllowInvalid(true).build());
-    sh.getRange(2, IMC.RATE + 1, n, 1).setNumberFormat('#,##0.00');
-    sh.setColumnWidths(1, 1, 60); sh.setColumnWidth(IMC.ITEM + 1, 240); sh.setColumnWidth(IMC.FINPROJ + 1, 240);
-    sh.setColumnWidth(IMC.SUBCAT + 1, 180); sh.setColumnWidth(IMC.STATUS + 1, 260);
-  }
-  ss.setActiveSheet(sh);
-  var ready = rows.filter(function (r) { return r[IMC.POST] === true; }).length;
-  ui.alert('IMS material costs',
-    rows.length + ' unbooked requisition line(s) loaded; ' + ready + ' ticked and ready.\n' +
-    (rows.length - ready ? (rows.length - ready) + ' need a Finance project, a rate or your tick.\n' : '') +
-    (noPrj ? noPrj + ' line(s) ignored: the requisition has no Project at all.\n' : '') +
-    '\nReview the "' + IM_COST_SHEET + '" sheet, then run "2. Post ticked lines".', ui.ButtonSet.OK);
+  Object.keys(touched).forEach(function (prj) {
+    var w = IM_ensureFinanceProject_(prj, names[prj]);
+    if (w) res.warnings.push(w);
+  });
+  return res;
 }
 
-/** Step 2: book the ticked, valid lines through submitProjectCosts(). */
-function IM_postCostImport() {
-  var ss = SpreadsheetApp.getActive(), ui = SpreadsheetApp.getUi();
-  var sh = ss.getSheetByName(IM_COST_SHEET);
-  if (!sh || sh.getLastRow() < 2) { ui.alert('Nothing to post. Run "1. Prepare" first.'); return; }
+/** Trigger / menu entry points + heartbeat (log sheet M1: if it is stale, the trigger is not running). */
+function IM_importImsCostsTrigger() { IM_runImport_(true); }
+function IM_importImsCostsNow() { IM_runImport_(false); }
 
-  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, IM_COST_HEADERS.length).getValues();
-  var done = IM_postedKeys_();
-  var entries = [], at = [], total = 0, projects = {}, skipped = [];
-  vals.forEach(function (r, i) {
-    if (r[IMC.POST] !== true || /^Posted/.test(String(r[IMC.STATUS]))) return;
-    var qty = Number(r[IMC.QTY]), rate = Number(r[IMC.RATE]), fin = String(r[IMC.FINPROJ] || '').trim(), key = r[IMC.KEY];
-    var why = !fin ? 'pick a Finance project' : !(qty > 0) ? 'bad qty' : !(rate > 0) ? 'no rate' :
-              done[key] ? 'already booked as ' + done[key] : '';
-    if (why) { sh.getRange(i + 2, IMC.STATUS + 1).setValue('Not posted: ' + why); skipped.push(r[IMC.REQ] + ' ' + r[IMC.CODE] + ': ' + why); return; }
-    entries.push({
-      entry_type: 'Material', project: fin, entry_date: IM_dateStr_(r[IMC.DATE]), submitted_by: 'IMS import',
-      data: { materialName: String(r[IMC.ITEM]), quantity: qty, unit: String(r[IMC.UNIT]), rate: rate, gst_rate: 0,
-              subcategory: String(r[IMC.SUBCAT] || ''),
-              description: 'Issued from IMS stock · ' + r[IMC.REQ] + ' · ' + r[IMC.CODE], notes: key }
-    });
-    at.push(i + 2);
-    total += qty * rate;
-    projects[fin] = (projects[fin] || 0) + qty * rate;
-  });
-  if (!entries.length) { ui.alert('Nothing to post.' + (skipped.length ? '\n\n' + skipped.join('\n') : '')); return; }
-
-  var lines = Object.keys(projects).map(function (p) { return '  ' + p + ': ₹' + projects[p].toFixed(2); }).join('\n');
-  var ok = ui.alert('Book ' + entries.length + ' material cost line(s)?',
-    'Total ₹' + total.toFixed(2) + ' (no GST) as Project_Costs "Material" entries, Status Pending:\n' + lines +
-    (skipped.length ? '\n\nSkipped:\n' + skipped.join('\n') : ''), ui.ButtonSet.YES_NO);
-  if (ok !== ui.Button.YES) return;
-
-  var res = submitProjectCosts(entries);
-  if (!res || !res.success) {
-    // submitProjectCosts appends one by one: mark whatever did land, so a retry cannot double-book it
-    var landed = IM_postedKeys_();
-    at.forEach(function (row, k) {
-      var key = entries[k].data.notes;
-      sh.getRange(row, IMC.STATUS + 1).setValue(landed[key] ? 'Posted ' + landed[key] : 'Not posted: ' + ((res && res.message) || 'error'));
-      if (landed[key]) sh.getRange(row, IMC.POST + 1).setValue(false);
-    });
-    ui.alert('Finance did not accept all lines: ' + ((res && res.message) || 'error') +
-             '\nLines that did land are marked Posted; nothing is booked twice if you run Post again.');
-    return;
+function IM_runImport_(quiet) {
+  var res;
+  try { res = IM_importImsCosts(); }
+  catch (e) {
+    if (!quiet) SpreadsheetApp.getUi().alert('IMS material costs', 'Import failed: ' + e.message, SpreadsheetApp.getUi().ButtonSet.OK);
+    else Logger.log('IMS cost import failed: ' + e.message);
+    return null;
   }
-  var pairs = {};
-  res.ids.forEach(function (id, k) {
-    sh.getRange(at[k], IMC.STATUS + 1).setValue('Posted ' + id);
-    sh.getRange(at[k], IMC.POST + 1).setValue(false);
-    pairs[String(vals[at[k] - 2][IMC.PRJ]).toUpperCase()] = entries[k].project;
-  });
-  try { IM_saveProjectMap_(pairs); }
-  catch (e) { ss.toast('Booked, but the project pairing could not be saved to Masters: ' + e.message, 'IMS material costs', 10); }
-  var lastSub = String(vals[at[at.length - 1] - 2][IMC.SUBCAT] || '');
-  if (lastSub) PropertiesService.getScriptProperties().setProperty('IM_LAST_SUBCAT', lastSub);
-  ui.alert('Booked ' + res.count + ' line(s), ₹' + total.toFixed(2) + '. They appear in Project_Costs as Pending (' + res.ids[0] +
-           (res.ids.length > 1 ? ' … ' + res.ids[res.ids.length - 1] : '') + ').');
+  if (res.busy) { if (!quiet) SpreadsheetApp.getActive().toast('Another import is running; try again in a minute.', 'IMS material costs', 6); return res; }
+  var n = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === IM_IMPORT_FN; }).length;
+  try {
+    IM_logSheet_().getRange('M1').setValue('Last import ' + Utilities.formatDate(new Date(), 'GMT+5:30', 'dd/MM HH:mm') +
+      ' · +' + res.newLines + ' line(s), ' + res.created + ' row(s) created, ' + res.updated + ' updated · triggers: ' + n);
+  } catch (e) {}
+  if (!quiet) {
+    var msg = res.newLines + ' new requisition line(s) imported.\n' + res.created + ' cost row(s) created, ' + res.updated + ' updated' +
+      (res.closed ? ', ' + res.closed + ' closed (lines removed in IMS)' : '') + '.' +
+      (res.waitingRate ? '\n' + res.waitingRate + ' line(s) wait for an Avg Rate in IMS Item Master.' : '') +
+      (res.waitingProject ? '\n' + res.waitingProject + ' line(s) wait: PRJ id not found in Masters.' : '') +
+      (res.warnings.length ? '\n\nCheck: ' + res.warnings.join('\n') : '');
+    SpreadsheetApp.getUi().alert('IMS material costs', msg, SpreadsheetApp.getUi().ButtonSet.OK);
+  }
+  return res;
+}
+
+/** Create the 10-minute trigger (once, from the editor; it also authorises the script). */
+function IM_installImportTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === IM_IMPORT_FN) ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger(IM_IMPORT_FN).timeBased().everyMinutes(IM_IMPORT_MINUTES).create();
+  var res = IM_runImport_(true);
+  var msg = 'IMS cost import trigger created (every ' + IM_IMPORT_MINUTES + ' minutes). First run: ' +
+            (res && !res.busy ? res.newLines + ' line(s), ' + res.created + ' row(s) created.' : 'will run at the next tick.');
+  try { SpreadsheetApp.getUi().alert('IMS material costs', msg, SpreadsheetApp.getUi().ButtonSet.OK); } catch (e) { Logger.log(msg); }
+}
+
+/** Recreate the trigger if it has gone missing. Called when Finance opens. */
+function IM_ensureImportTrigger_() {
+  var has = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === IM_IMPORT_FN; });
+  if (!has) ScriptApp.newTrigger(IM_IMPORT_FN).timeBased().everyMinutes(IM_IMPORT_MINUTES).create();
 }

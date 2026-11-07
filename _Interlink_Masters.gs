@@ -277,7 +277,8 @@ function IM_importImsCostsLocked_() {
   var ims = SpreadsheetApp.openById(IM_IMS_SHEET_ID);
   var req = ims.getSheetByName('Material Requisition Register'), items = ims.getSheetByName('Item Master');
   if (!req || !items) throw new Error('IMS sheets not found (Material Requisition Register / Item Master).');
-  var res = { newLines: 0, created: 0, updated: 0, closed: 0, waitingRate: 0, waitingProject: 0, warnings: [] };
+  var res = { newLines: 0, created: 0, updated: 0, closed: 0, waitingRate: 0, waitingProject: 0, warnings: [],
+              imsLines: 0, prjLines: 0, ignored: {} };  // diagnostics: what IMS holds, and which project texts were not PRJ-###
 
   var names = {};  // PRJ-### → Masters name
   (Masters.getProjects() || []).forEach(function (p) { names[String(p.Project_ID).toUpperCase()] = String(p.Name); });
@@ -286,8 +287,11 @@ function IM_importImsCostsLocked_() {
   // 1. the PRJ requisition lines IMS has right now
   var lines = [], present = {};
   if (req.getLastRow() >= 2) req.getRange(2, 1, req.getLastRow() - 1, 8).getValues().forEach(function (r) {
-    var reqNo = r[1], code = r[4], qty = Number(r[6]), m = /^PRJ-\d+/i.exec(String(r[3] || '').trim());
-    if (!reqNo || !code || !(qty > 0) || !m) return;
+    var reqNo = r[1], code = r[4], qty = Number(r[6]), proj = String(r[3] || '').trim(), m = /^PRJ-\d+/i.exec(proj);
+    if (!reqNo || !code || !(qty > 0)) return;
+    res.imsLines++;
+    if (!m) { var nm = proj || '(blank)'; res.ignored[nm] = (res.ignored[nm] || 0) + 1; return; }
+    res.prjLines++;
     var key = reqNo + ':SR' + r[0];
     present[key] = true;
     lines.push({ key: key, date: IM_dateStr_(r[2]), prj: m[0].toUpperCase(), code: code, qty: qty, unit: r[7],
@@ -391,7 +395,10 @@ function IM_runImport_(quiet) {
       ' · +' + res.newLines + ' line(s), ' + res.created + ' row(s) created, ' + res.updated + ' updated · triggers: ' + n);
   } catch (e) {}
   if (!quiet) {
-    var msg = res.newLines + ' new requisition line(s) imported.\n' + res.created + ' cost row(s) created, ' + res.updated + ' updated' +
+    var ign = Object.keys(res.ignored).sort(function (a, b) { return res.ignored[b] - res.ignored[a]; });
+    var msg = 'IMS has ' + res.imsLines + ' requisition line(s); ' + res.prjLines + ' begin with PRJ-###.\n' +
+      (ign.length ? 'Not imported (Project does not begin with PRJ-###): ' + ign.slice(0, 5).map(function (n) { return n + ' ×' + res.ignored[n]; }).join(', ') + (ign.length > 5 ? ', …' : '') + '\n' : '') +
+      '\n' + res.newLines + ' new requisition line(s) imported.\n' + res.created + ' cost row(s) created, ' + res.updated + ' updated' +
       (res.closed ? ', ' + res.closed + ' closed (lines removed in IMS)' : '') + '.' +
       (res.waitingRate ? '\n' + res.waitingRate + ' line(s) wait for an Avg Rate in IMS Item Master.' : '') +
       (res.waitingProject ? '\n' + res.waitingProject + ' line(s) wait: PRJ id not found in Masters.' : '') +

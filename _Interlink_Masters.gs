@@ -125,12 +125,14 @@ function IM_onOpen_() {
     .addItem('Refresh dropdowns from Masters', 'IM_refreshDropdowns')
     .addItem('Clear Masters cache',            'IM_clearCache')
     .addSeparator()
+    .addItem('Add PM projects to Finance project list', 'IM_syncFinanceProjectsNow')
     .addItem('IMS material costs: import now', 'IM_importImsCostsNow')
     .addSeparator()
     .addItem('About',                          'IM_about_')
     .addToUi();
   try { Masters.registerSystemSheet('finance', SpreadsheetApp.getActive().getId()); } catch (e) {}  // lets PM's project delete find this sheet
   try { IM_ensureImportTrigger_(); } catch (e) {}  // self-heal the 10-minute IMS cost import
+  try { IM_syncFinanceProjects_(); } catch (e) {}  // every PM project is a Finance project (invoices / bills / customers can be tied to it)
 }
 
 function IM_about_() {
@@ -250,20 +252,53 @@ function IM_groupRows_() {
   return { byKey: byKey, top: top };
 }
 
-/** Add PRJ-### to Finance's M_Project (Code | Name | Active) unless a project with that code exists. Returns a warning or ''. */
-function IM_ensureFinanceProject_(prj, name) {
+/**
+ * Every active Masters (PM) project becomes a Finance project, so invoices, bills, payments and customers can
+ * be tied to it: M_Project (Code | Name | Active) gets Code PRJ-###, Name = the Masters name, which makes the
+ * Finance label identical to the PM label "PRJ-001 — Name". Finance's own projects are never touched:
+ *   - a code Finance does not have yet → a new row (inactive Masters projects are not added);
+ *   - same code and same name → only deactivated if Masters has finished the project (never re-activated);
+ *   - same code but another name → left alone, reported as a warning.
+ * When rows were added the sheet dropdowns are refreshed (applyProjectDropdowns); the web forms read the list live.
+ * Returns { added, deactivated, warnings[] }.
+ */
+function IM_syncFinanceProjects_() {
+  var out = { added: 0, deactivated: 0, warnings: [] };
   var sh = _getSS().getSheetByName(P.PROJECT);
-  if (!sh) return '';
+  if (!sh) return out;
   var rows = sh.getLastRow() >= 2 ? sh.getRange(2, 1, sh.getLastRow() - 1, PRC_TOTAL).getValues() : [];
-  for (var i = 0; i < rows.length; i++) {
-    if (_s(rows[i][PRC.CODE]).toUpperCase() === prj) {
-      return _s(rows[i][PRC.NAME]) === name ? '' : 'Finance already has code ' + prj + ' for "' + _s(rows[i][PRC.NAME]) + '" (Masters: "' + name + '")';
+  var byCode = {};
+  rows.forEach(function (r, i) { var c = _s(r[PRC.CODE]).toUpperCase(); if (c) byCode[c] = { i: i, row: r }; });
+  var add = [];
+  (Masters.getProjects() || []).forEach(function (p) {
+    var id = String(p.Project_ID).toUpperCase(), name = String(p.Name), active = String(p['Active?'] || 'Yes').toLowerCase() !== 'no';
+    var ex = byCode[id];
+    if (!ex) {
+      if (!active) return;
+      var row = new Array(PRC_TOTAL).fill('');
+      row[PRC.CODE] = id; row[PRC.NAME] = name; row[PRC.ACTIVE] = 'Yes';
+      add.push(row);
+    } else if (_s(ex.row[PRC.NAME]) !== name) {
+      out.warnings.push('Finance already uses code ' + id + ' for "' + _s(ex.row[PRC.NAME]) + '" (Masters: "' + name + '"): left as it is.');
+    } else if (!active && _s(ex.row[PRC.ACTIVE]) !== 'No') {
+      sh.getRange(ex.i + 2, PRC.ACTIVE + 1).setValue('No');
+      out.deactivated++;
     }
+  });
+  if (add.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, add.length, PRC_TOTAL).setValues(add);
+    out.added = add.length;
   }
-  var row = new Array(PRC_TOTAL).fill('');
-  row[PRC.CODE] = prj; row[PRC.NAME] = name; row[PRC.ACTIVE] = 'Yes';
-  sh.getRange(sh.getLastRow() + 1, 1, 1, PRC_TOTAL).setValues([row]);
-  return '';
+  if (out.added || out.deactivated) { try { applyProjectDropdowns(); } catch (e) { Logger.log('project dropdowns: ' + e.message); } }
+  return out;
+}
+
+/** Menu: add the PM projects to Finance's project list now. */
+function IM_syncFinanceProjectsNow() {
+  var r = IM_syncFinanceProjects_();
+  SpreadsheetApp.getActive().toast(
+    (r.added ? r.added + ' project(s) added to the Finance project list.' : 'Finance project list already has every PM project.') +
+    (r.deactivated ? ' ' + r.deactivated + ' deactivated.' : '') + (r.warnings.length ? ' ' + r.warnings.join(' ') : ''), '🔗 Interlink', 8);
 }
 
 /** The import. Safe to run any time, as often as you like: it only ever adds what is new. */
@@ -337,7 +372,7 @@ function IM_importImsCostsLocked_() {
     g.qty += Number(r[IML.QTY]); g.amount += Number(r[IML.AMOUNT]); g.lines++;
     if (String(r[IML.DATE]) > g.date) g.date = String(r[IML.DATE]);
   });
-  var pc = _getProjectCostsSheet(), entries = [], touched = {};
+  var pc = _getProjectCostsSheet(), entries = [];
   var sub = PropertiesService.getScriptProperties().getProperty('IM_LAST_SUBCAT') || '';
   Object.keys(sums).forEach(function (key) {
     var g = sums[key], ex = groups.byKey[key];
@@ -356,12 +391,11 @@ function IM_importImsCostsLocked_() {
       pc.getRange(ex.row, PCC.RATE_PER_UNIT + 1).setValue(g.qty ? g.amount / g.qty : 0);
       pc.getRange(ex.row, PCC.AMOUNT_EX_GST + 1).setValue(g.amount);
       pc.getRange(ex.row, PCC.AMOUNT + 1).setValue(g.amount);
-      res.updated++; touched[g.prj] = true;
+      res.updated++;
     } else if (g.lines > 0) {
       entries.push({ entry_type: 'Material', project: g.prj + ' — ' + names[g.prj], entry_date: g.date, submitted_by: 'IMS import',
         data: { materialName: String(g.item), quantity: g.qty, unit: String(g.unit), rate: g.amount / g.qty, gst_rate: 0,
                 subcategory: sub, description: desc, notes: g.key } });
-      touched[g.prj] = true;
     }
   });
   if (entries.length) {
@@ -369,10 +403,6 @@ function IM_importImsCostsLocked_() {
     if (!out || !out.success) throw new Error('Finance did not accept the cost rows: ' + ((out && out.message) || 'error') + ' (nothing is lost: they are retried on the next run)');
     res.created = out.count;
   }
-  Object.keys(touched).forEach(function (prj) {
-    var w = IM_ensureFinanceProject_(prj, names[prj]);
-    if (w) res.warnings.push(w);
-  });
   return res;
 }
 
@@ -381,13 +411,17 @@ function IM_importImsCostsTrigger() { IM_runImport_(true); }
 function IM_importImsCostsNow() { IM_runImport_(false); }
 
 function IM_runImport_(quiet) {
-  var res;
+  var res, proj = { added: 0, deactivated: 0, warnings: [] };
+  try { proj = IM_syncFinanceProjects_(); }                    // first: the PM projects must be Finance projects even if IMS is unreachable
+  catch (e) { proj.warnings.push('Project list not synced: ' + e.message); }
   try { res = IM_importImsCosts(); }
   catch (e) {
     if (!quiet) SpreadsheetApp.getUi().alert('IMS material costs', 'Import failed: ' + e.message, SpreadsheetApp.getUi().ButtonSet.OK);
     else Logger.log('IMS cost import failed: ' + e.message);
     return null;
   }
+  res.warnings = (res.warnings || []).concat(proj.warnings);
+  res.projectsAdded = proj.added;
   if (res.busy) { if (!quiet) SpreadsheetApp.getActive().toast('Another import is running; try again in a minute.', 'IMS material costs', 6); return res; }
   var n = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === IM_IMPORT_FN; }).length;
   try {
@@ -398,6 +432,7 @@ function IM_runImport_(quiet) {
     var ign = Object.keys(res.ignored).sort(function (a, b) { return res.ignored[b] - res.ignored[a]; });
     var msg = 'IMS has ' + res.imsLines + ' requisition line(s); ' + res.prjLines + ' begin with PRJ-###.\n' +
       (ign.length ? 'Not imported (Project does not begin with PRJ-###): ' + ign.slice(0, 5).map(function (n) { return n + ' ×' + res.ignored[n]; }).join(', ') + (ign.length > 5 ? ', …' : '') + '\n' : '') +
+      (proj.added ? '\n' + proj.added + ' PM project(s) added to the Finance project list.' : '') +
       '\n' + res.newLines + ' new requisition line(s) imported.\n' + res.created + ' cost row(s) created, ' + res.updated + ' updated' +
       (res.closed ? ', ' + res.closed + ' closed (lines removed in IMS)' : '') + '.' +
       (res.waitingRate ? '\n' + res.waitingRate + ' line(s) wait for an Avg Rate in IMS Item Master.' : '') +

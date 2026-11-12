@@ -358,7 +358,7 @@ function IM_importImsCostsLocked_() {
       open[k] = { n: n, key: 'IMS:' + l.prj + ':' + l.code + '#' + n };
       groups.top[k] = open[k];
     }
-    newRows.push([l.key, l.date, l.prj, l.code, l.item, l.qty, l.unit, rate, IM_round_(l.qty * rate, 2), open[k].key, 'Imported']);
+    newRows.push([l.key, l.date, l.prj, l.code, l.item, l.qty, l.unit, rate, IM_round_(l.qty * rate, 4), open[k].key, 'Imported']);   // 4 decimals per line, the group total is rounded to paise
   });
   if (newRows.length) {
     log.getRange(log.getLastRow() + 1, 1, newRows.length, IM_LOG_HEAD.length).setValues(newRows);

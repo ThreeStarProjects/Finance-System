@@ -127,6 +127,8 @@ function IM_onOpen_() {
     .addSeparator()
     .addItem('Add PM projects to Finance project list', 'IM_syncFinanceProjectsNow')
     .addItem('IMS material costs: import now', 'IM_importImsCostsNow')
+    .addItem('IMS material costs: set subcategory…', 'IM_setCostSubcategory')
+    .addItem('Clean up old import sheets', 'IM_cleanupOldSheets')
     .addSeparator()
     .addItem('About',                          'IM_about_')
     .addToUi();
@@ -457,4 +459,54 @@ function IM_installImportTrigger() {
 function IM_ensureImportTrigger_() {
   var has = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === IM_IMPORT_FN; });
   if (!has) ScriptApp.newTrigger(IM_IMPORT_FN).timeBased().everyMinutes(IM_IMPORT_MINUTES).create();
+}
+
+// -----------------------------------------------------------------------------
+// Tidy-ups after the move to the automatic import.
+// -----------------------------------------------------------------------------
+
+/** Menu: delete the sheets the old manual import left behind. Shows what they are first; asks before deleting. */
+function IM_cleanupOldSheets() {
+  var ui = SpreadsheetApp.getUi(), ss = SpreadsheetApp.getActive();
+  var found = ['IMS_Cost_Import', 'IMS_Project_Map', '_old IMS_Project_Map']
+    .map(function (n) { return ss.getSheetByName(n); }).filter(function (s) { return !!s; });
+  if (!found.length) { ui.alert('Clean up old import sheets', 'Nothing to clean up: the old sheets are already gone.', ui.ButtonSet.OK); return; }
+  var list = found.map(function (s) { return '  • ' + s.getName() + ' (' + Math.max(s.getLastRow() - 1, 0) + ' data row(s))'; }).join('\n');
+  var ok = ui.alert('Delete the old import sheets?',
+    'These are no longer used (the IMS cost import is automatic now):\n\n' + list + '\n\nThis cannot be undone. Delete them?', ui.ButtonSet.YES_NO);
+  if (ok !== ui.Button.YES) return;
+  found.forEach(function (s) { ss.deleteSheet(s); });
+  ss.toast(found.length + ' old sheet(s) deleted.', '🔗 Interlink', 5);
+}
+
+/**
+ * Menu: choose the Finance category (subcategory) the imported material costs are filed under.
+ * Also fills it on the imported rows that are still Pending and have none.
+ */
+function IM_setCostSubcategory() {
+  var ui = SpreadsheetApp.getUi(), props = PropertiesService.getScriptProperties();
+  var cats = [];
+  try { cats = getCategories() || []; } catch (e) {}
+  var names = cats.map(function (c) { return c.category; }).filter(String);
+  var cur = props.getProperty('IM_LAST_SUBCAT') || '(none)';
+  var r = ui.prompt('IMS material costs: subcategory',
+    'Current: ' + cur + '\n\nType the Finance category for imported material costs, exactly as in M_Category.\n' +
+    'Some of them: ' + names.slice(0, 15).join(', ') + (names.length > 15 ? ', …' : ''), ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  var text = String(r.getResponseText() || '').trim().toLowerCase();
+  var hit = cats.filter(function (c) { return String(c.category).toLowerCase() === text; })[0];
+  if (!hit) { ui.alert('Subcategory', '"' + r.getResponseText() + '" is not in M_Category. Nothing changed.', ui.ButtonSet.OK); return; }
+  props.setProperty('IM_LAST_SUBCAT', hit.category);
+
+  var filled = 0, pc = _getProjectCostsSheet();
+  if (pc && pc.getLastRow() >= 2) {
+    pc.getRange(2, 1, pc.getLastRow() - 1, Math.min(pc.getLastColumn(), PCC_TOTAL)).getValues().forEach(function (row, i) {
+      if (/^IMS:PRJ-/.test(_s(row[PCC.NOTES])) && _s(row[PCC.STATUS]) === 'Pending' && _s(row[PCC.DELETED]) !== 'Yes' && !_s(row[PCC.SUBCATEGORY])) {
+        pc.getRange(i + 2, PCC.SUBCATEGORY + 1, 1, 2).setValues([[hit.category, hit.group || '']]);   // Subcategory, Category (group)
+        filled++;
+      }
+    });
+  }
+  ui.alert('Subcategory', 'Imported material costs are now filed under "' + hit.category + '".' +
+    (filled ? '\n' + filled + ' existing Pending row(s) without a category were updated.' : ''), ui.ButtonSet.OK);
 }

@@ -122,13 +122,9 @@ function IM_installInterlinkMenu() {
 function IM_onOpen_() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('🔗 Interlink')
-    .addItem('Refresh dropdowns from Masters', 'IM_refreshDropdowns')
-    .addItem('Clear Masters cache',            'IM_clearCache')
-    .addSeparator()
     .addItem('Add PM projects to Finance project list', 'IM_syncFinanceProjectsNow')
     .addItem('IMS material costs: import now', 'IM_importImsCostsNow')
     .addItem('IMS material costs: set subcategory…', 'IM_setCostSubcategory')
-    .addItem('Clean up old import sheets', 'IM_cleanupOldSheets')
     .addSeparator()
     .addItem('About',                          'IM_about_')
     .addToUi();
@@ -146,20 +142,6 @@ function IM_about_() {
     'Sites) from the Masters library.\n\n' +
     'Masters version: ' + pv + '\n' +
     'Cache TTL: ' + IM_CACHE_TTL + ' sec',
-    SpreadsheetApp.getUi().ButtonSet.OK
-  );
-}
-
-// -----------------------------------------------------------------------------
-// Dropdown refresher — stub for v0.4 Phase 1. Each system will fill in its
-// own IM_refreshDropdowns() in a sibling _Interlink_Dropdowns.gs file that
-// knows which sheets+columns to re-validate.
-// -----------------------------------------------------------------------------
-function IM_refreshDropdowns() {
-  SpreadsheetApp.getUi().alert(
-    'Dropdowns not wired yet',
-    'This system doesn\'t have per-sheet dropdown rules configured yet. ' +
-    'That lives in _Interlink_Dropdowns.gs (next step).',
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
@@ -464,20 +446,6 @@ function IM_ensureImportTrigger_() {
 // -----------------------------------------------------------------------------
 // Tidy-ups after the move to the automatic import.
 // -----------------------------------------------------------------------------
-
-/** Menu: delete the sheets the old manual import left behind. Shows what they are first; asks before deleting. */
-function IM_cleanupOldSheets() {
-  var ui = SpreadsheetApp.getUi(), ss = SpreadsheetApp.getActive();
-  var found = ['IMS_Cost_Import', 'IMS_Project_Map', '_old IMS_Project_Map']
-    .map(function (n) { return ss.getSheetByName(n); }).filter(function (s) { return !!s; });
-  if (!found.length) { ui.alert('Clean up old import sheets', 'Nothing to clean up: the old sheets are already gone.', ui.ButtonSet.OK); return; }
-  var list = found.map(function (s) { return '  • ' + s.getName() + ' (' + Math.max(s.getLastRow() - 1, 0) + ' data row(s))'; }).join('\n');
-  var ok = ui.alert('Delete the old import sheets?',
-    'These are no longer used (the IMS cost import is automatic now):\n\n' + list + '\n\nThis cannot be undone. Delete them?', ui.ButtonSet.YES_NO);
-  if (ok !== ui.Button.YES) return;
-  found.forEach(function (s) { ss.deleteSheet(s); });
-  ss.toast(found.length + ' old sheet(s) deleted.', '🔗 Interlink', 5);
-}
 
 /**
  * Menu: choose the Finance category (subcategory) the imported material costs are filed under.

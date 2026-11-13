@@ -126,6 +126,7 @@ function IM_onOpen_() {
     .addItem('IMS material costs: import now', 'IM_importImsCostsNow')
     .addItem('IMS material costs: set subcategory…', 'IM_setCostSubcategory')
     .addSeparator()
+    .addItem('❓ Start here',                  'IM_showStartHere')
     .addItem('About',                          'IM_about_')
     .addToUi();
   try { Masters.registerSystemSheet('finance', SpreadsheetApp.getActive().getId()); } catch (e) {}  // lets PM's project delete find this sheet
@@ -421,7 +422,8 @@ function IM_runImport_(quiet) {
       (res.closed ? ', ' + res.closed + ' closed (lines removed in IMS)' : '') + '.' +
       (res.waitingRate ? '\n' + res.waitingRate + ' line(s) wait for an Avg Rate in IMS Item Master.' : '') +
       (res.waitingProject ? '\n' + res.waitingProject + ' line(s) wait: PRJ id not found in Masters.' : '') +
-      (res.warnings.length ? '\n\nCheck: ' + res.warnings.join('\n') : '');
+      (res.warnings.length ? '\n\nCheck: ' + res.warnings.join('\n') : '') +
+      '\n\nFinance also does this by itself every 10 minutes.';
     SpreadsheetApp.getUi().alert('IMS material costs', msg, SpreadsheetApp.getUi().ButtonSet.OK);
   }
   return res;
@@ -477,4 +479,33 @@ function IM_setCostSubcategory() {
   }
   ui.alert('Subcategory', 'Imported material costs are now filed under "' + hit.category + '".' +
     (filled ? '\n' + filled + ' existing Pending row(s) without a category were updated.' : ''), ui.ButtonSet.OK);
+}
+
+/** Menu: ❓ Start here. Creates the tab the first time, then just opens it. */
+function IM_showStartHere() {
+  var ss = SpreadsheetApp.getActive(), sh = ss.getSheetByName('Start here');
+  if (!sh) {
+    sh = ss.insertSheet('Start here', 0);
+    var rows = [
+      ['Start here: Finance', 'title'],
+      ['How material costs from IMS reach Finance', 'h'],
+      ["1.  Every PM project appears in Finance's project list within a few minutes, named like PRJ-001 — Project name. Pick it on invoices, bills and payments to tie them to the project.", ''],
+      ['2.  Material issued by the IMS store to a project (a Material Requisition whose project starts with PRJ-…) is imported into Project_Costs by itself every 10 minutes. You can also use 🔗 Interlink → IMS material costs: import now.', ''],
+      ['3.  There is one cost row per project and item, and it grows as more is issued. The row stays Pending until you approve it. Once it is approved or rejected it never changes; later issues of that item start a second row.', ''],
+      ['4.  Costs are quantity × the IMS Avg Rate at the time of issue (no GST: GST was paid on the purchase bill). If IMS has no Avg Rate for an item, those lines wait until it has one.', ''],
+      ['5.  The category of these rows is set in 🔗 Interlink → IMS material costs: set subcategory…', ''],
+      ['Take care', 'h'],
+      ['•  A vendor bill ticked "Count in project cost" must not cover stock that is also issued from IMS, or the same material is counted twice.', ''],
+      ['If something looks wrong', 'h'],
+      ['•  Open this spreadsheet: it restarts the 10-minute import if it has stopped.', ''],
+      ['•  In PM, 🔗 Interlink → 📋 Needs attention lists requisition lines that Finance cannot cost, and 🩺 Health check shows whether this import is running.', '']
+    ];
+    sh.getRange(1, 1, rows.length, 1).setValues(rows.map(function (r) { return [r[0]]; })).setWrap(true).setVerticalAlignment('top');
+    sh.setColumnWidth(1, 900);
+    rows.forEach(function (r, i) {
+      if (r[1] === 'title') sh.getRange(i + 1, 1).setFontSize(16).setFontWeight('bold');
+      if (r[1] === 'h') sh.getRange(i + 1, 1).setFontWeight('bold').setBackground('#DDEBF7');
+    });
+  }
+  ss.setActiveSheet(sh);
 }

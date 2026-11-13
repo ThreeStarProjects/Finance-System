@@ -1554,7 +1554,7 @@
     <!-- Project Costs — Row-wise table (Batch 10, preserved) -->
     <div class="card" id="pj-costs-card" style="display:none; margin-top:var(--sp-3);">
       <div class="card__title-row">
-        <div class="card__title">Project Costs (<span id="pj-costs-count">0</span>)</div>
+        <div class="card__title">Project Costs &mdash; material &amp; other (<span id="pj-costs-count">0</span>)</div>
         <span class="small muted">Total: <strong id="pj-costs-total">₹ 0</strong></span>
       </div>
       <div class="tablewrap">
@@ -1566,6 +1566,28 @@
             <th>Subcategory</th>
             <th>Description</th>
             <th class="num">Amount</th>
+            <th>Status</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Man-hours (own sheet: Man_Hour_Costs; old rows from Project_Costs are included and tagged) -->
+    <div class="card" id="pj-manhours-card" style="display:none; margin-top:var(--sp-3);">
+      <div class="card__title-row">
+        <div class="card__title">Man-hours (<span id="pj-mh-count">0</span>)</div>
+        <span class="small muted"><strong id="pj-mh-hours">0</strong> h · Total: <strong id="pj-mh-total">₹ 0</strong></span>
+      </div>
+      <div class="tablewrap">
+        <table class="table" id="pj-mh-table">
+          <thead><tr>
+            <th>Date</th>
+            <th>Employee</th>
+            <th class="num">Hours</th>
+            <th class="num">Rate / hr</th>
+            <th class="num">Amount</th>
+            <th>Description</th>
             <th>Status</th>
           </tr></thead>
           <tbody></tbody>
@@ -4215,7 +4237,7 @@ function floatLoad(){
 // PROJECTS — unified per-project view (Batch A rebuild)
 // ============================================================
 // IDs of cards we hide when no project is picked.
-var PJ_CARDS = ['pj-strip','pj-rev-card','pj-cost-card','pj-costs-card',
+var PJ_CARDS = ['pj-strip','pj-rev-card','pj-cost-card','pj-costs-card','pj-manhours-card',
                 'pj-expenses-card','pj-bills-card','pj-invoices-card',
                 'pj-payments-card','pj-billpayments-card'];
 
@@ -4310,12 +4332,14 @@ function pjLoad(){
       ? '—' : (d.marginPct.toFixed(1) + '%');
     $('pj-cost-breakdown').textContent =
       'Project Costs ₹' + fmt(d.spentProjectCosts || 0) +
+      ' · Man-hours ₹' + fmt(d.spentManHours || 0) +
       ' · Direct ₹'    + fmt(d.spentDirect || 0) +
       ' · Bills ₹'     + fmt(d.spentBills || 0);
   });
 
   // 2) Row-wise Project Costs table
   pjLoadProjectCosts(proj, fy);
+  pjLoadManHours(proj, fy);
 
   // 3) Everything else from the existing getProjectOverview (all FY — client-side FY filter when picked)
   callServer('getProjectOverview', [proj], function(res){
@@ -4432,6 +4456,7 @@ function pjToggleBill(billId, cb){
         ? '—' : (d.marginPct.toFixed(1) + '%');
       $('pj-cost-breakdown').textContent =
         'Project Costs ₹' + fmt(d.spentProjectCosts || 0) +
+        ' · Man-hours ₹' + fmt(d.spentManHours || 0) +
         ' · Direct ₹'    + fmt(d.spentDirect || 0) +
         ' · Bills ₹'     + fmt(d.spentBills || 0);
     });
@@ -4514,6 +4539,35 @@ function pjRenderBillPayments(bps, fy){
       '<td class="ds-desc">'+esc(p.applied)+'</td>' +
     '</tr>';
   }).join('');
+}
+
+function pjLoadManHours(proj, fy){
+  if (!proj){ return; }
+  var card = $('pj-manhours-card');
+  try {
+    callServer('getManHourRows', [proj, false], function(res){
+      var rows = (res && res.success && res.rows) ? res.rows.filter(function(r){ return pjMatchFy(r.date, fy); }) : [];
+      if (!rows.length){ card.style.display = 'none'; return; }
+      var total = 0, hours = 0;
+      $('pj-mh-table').querySelector('tbody').innerHTML = rows.map(function(r){
+        total += (r.amount || 0); hours += (r.hours || 0);
+        var statusCls = r.status === 'Approved' ? 'success' : (r.status === 'Rejected' ? 'muted' : 'warning');
+        return '<tr>' +
+          '<td>'+esc(r.date||'')+'</td>' +
+          '<td>'+esc(r.employee||'')+'</td>' +
+          '<td class="num">'+fmt(r.hours||0)+'</td>' +
+          '<td class="num">₹ '+fmt(r.rate||0)+'</td>' +
+          '<td class="num">₹ '+fmt(r.amount||0)+'</td>' +
+          '<td class="ds-desc">'+esc(r.description||'')+(r.legacy ? ' <span class="small muted">(old entry)</span>' : '')+'</td>' +
+          '<td><span class="pill pill--'+statusCls+'">'+esc(r.status||'')+'</span></td>' +
+        '</tr>';
+      }).join('');
+      $('pj-mh-count').textContent = rows.length;
+      $('pj-mh-hours').textContent = fmt(hours);
+      $('pj-mh-total').textContent = '₹ ' + fmt(total);
+      card.style.display = 'block';
+    });
+  } catch(e){ console.error('Error loading man-hours:', e); }
 }
 
 function pjLoadProjectCosts(proj, fy){
@@ -9326,7 +9380,7 @@ function hpcMhSingleSubmit(){
       subcategory: 'Salary & Wages', category: '',
       data: {date:date, employee:emp, hours:hours, description:desc}
     };
-    callServer('submitProjectCosts', [[entry]], function(res){
+    callServer('submitManHourCosts', [[entry]], function(res){
       btn.disabled = false; btn.innerHTML = 'Submit Man Hours Entry';
       if(res && res.success){
         toast('Man Hours entry saved','s');
@@ -9431,7 +9485,7 @@ function hpcMhBulkSubmit(){
 
     var btn = $('mh-bulk-submit');
     btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Submitting '+validEntries.length+' row(s)…';
-    callServer('submitProjectCosts', [validEntries], function(res){
+    callServer('submitManHourCosts', [validEntries], function(res){
       btn.disabled = false; btn.innerHTML = 'Submit Man Hours';
       if(res && res.success){
         toast('Submitted: '+res.count+' man-hours entries','s');

@@ -78,7 +78,7 @@ var PERSONAL_WIDTHS = [150,150,120,75,80, 110,110,80, 240,220,240, 110,200,200,1
 var PCLASS = { EXPENSE:'Expense', FUND_IN:'Fund In', FUND_OUT:'Fund Out', INTERNAL:'Internal' };
 
 // ── Project_Costs column map (Batch 14: + GST for Simple/Material) ─────
-// Entry Type: 'Simple' | 'Material' | 'ManHours'
+// Entry Type: 'Simple' | 'Material'  ('ManHours' = old rows only; new man-hours go to Man_Hour_Costs)
 // Subcategory from M_Category (c.category) → Category auto-filled (c.group)
 // Amount column stores the final INC-GST total; Amount_Ex_GST is the base.
 var PCC = {
@@ -106,6 +106,26 @@ var PROJECT_COSTS_WIDTHS = [150,120,180,100,
                              200,110,80,130,
                              220,100,140,150,70,
                              90,130];
+
+// ── Man_Hour_Costs: own-labour cost per project (kept apart from material / other Project_Costs) ─────
+// Hourly rate = employee daily rate ÷ MH_HOURS_PER_DAY (8); without a daily rate, monthly gross ÷ 240.
+// The rate is frozen on the row when saved. No GST on own labour (Amount = Amount_Ex_GST).
+var MH_SHEET = 'Man_Hour_Costs';
+var MH_HOURS_PER_DAY = 8;
+var MHC = {
+  ID:0, ENTRY_DATE:1, PROJECT:2, EMPLOYEE:3,
+  HOURS:4, HOURLY_RATE:5, AMOUNT:6,
+  DESCRIPTION:7, NOTES:8, STATUS:9, SUBMITTED_BY:10, SUBMISSION_DATE:11, DELETED:12,
+  SUBCATEGORY:13, CATEGORY:14
+};
+var MHC_TOTAL = 15;
+var MAN_HOUR_HEADERS = [
+  'MH_ID','Entry_Date','Project','Employee',
+  'Hours','Hourly_Rate','Amount',
+  'Description','Notes','Status','Submitted_By','Submission_Date','Deleted',
+  'Subcategory','Category'
+];
+var MAN_HOUR_WIDTHS = [150,120,180,180, 80,110,120, 260,220,100,140,150,70, 160,160];
 
 // ============================================================
 // DATE / FY HELPERS  (Indian FY: Apr 1 – Mar 31)
@@ -296,9 +316,112 @@ function _nextCostId(){
 }
 
 // ============================================================
+// MAN HOUR COSTS  (own sheet: Man_Hour_Costs)
+// ============================================================
+function _getManHourSheet(){
+  var ss = _getSS();
+  var sheet = ss.getSheetByName(MH_SHEET);
+  if (sheet) return sheet;
+  sheet = _buildSheet(ss, MH_SHEET, MAN_HOUR_HEADERS, MAN_HOUR_WIDTHS);
+  sheet.getRange(2, MHC.ENTRY_DATE+1, 5000, 1).setNumberFormat('yyyy-MM-dd');
+  sheet.getRange(2, MHC.SUBMISSION_DATE+1, 5000, 1).setNumberFormat('yyyy-MM-dd HH:mm:ss');
+  _validateCol(sheet, MHC.STATUS+1, ['Pending','Approved','Rejected']);
+  _validateCol(sheet, MHC.DELETED+1, ['Yes','No']);
+  sheet.setConditionalFormatRules([
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=$J2="Pending"')
+      .setBackground('#FFFACD')
+      .setRanges([sheet.getRange(2,1,5000,MHC_TOTAL)])
+      .build()
+  ]);
+  return sheet;
+}
+
+// "MH-yyyymmdd-0001": next free number for today (call once per batch, then count up).
+function _nextManHourIdStart(){
+  var sheet = _getManHourSheet();
+  var today = Utilities.formatDate(new Date(),'GMT+5:30','yyyyMMdd');
+  var prefix = 'MH-' + today + '-', max = 0;
+  if (_hasData(sheet)){
+    sheet.getRange(2, MHC.ID+1, sheet.getLastRow()-1, 1).getValues().forEach(function(r){
+      var v = _s(r[0]);
+      if (v.indexOf(prefix) === 0){ var n = parseInt(v.substring(prefix.length), 10); if (!isNaN(n) && n > max) max = n; }
+    });
+  }
+  return {prefix:prefix, next:max + 1};
+}
+
+// Hourly rate for an employee from the master (daily ÷ 8, else monthly ÷ 240). 0 = no salary on file.
+function _manHourRateFor(empName){
+  var emp = (typeof _findEmployee === 'function') ? _findEmployee(empName) : null;
+  var daily = emp ? _n(emp.dailyRate) : 0;
+  return daily > 0 ? (daily / MH_HOURS_PER_DAY) : (emp ? (_n(emp.grossSalary) / 240) : 0);
+}
+
+// entries: [{project, entry_date, submitted_by?, data:{employee, hours, description?, notes?}}]
+// All rows are checked first; if any row is bad nothing is saved.
+function submitManHourCosts(entries){
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch(e){ return {success:false, message:'Busy — try again.'}; }
+  try {
+    if (!entries || !entries.length) return {success:false, message:'No entries provided.'};
+    var sheet = _getManHourSheet();
+    var subDate = Utilities.formatDate(new Date(), 'GMT+5:30', 'yyyy-MM-dd HH:mm:ss');
+    var idv = _nextManHourIdStart(), rows = [], ids = [];
+    entries.forEach(function(entry){
+      var data = entry.data || {};
+      var project = _s(entry.project);
+      if (!project) throw new Error('Project is required.');
+      var empName = _s(data.employee || data.materialName || '');
+      if (typeof _resolveEmployeeName === 'function'){
+        var _r = _resolveEmployeeName(empName);
+        if (!_r.ok) throw new Error('Row for ' + empName + ': ' + _r.message);
+        empName = _r.name;
+      }
+      var hours = _n(data.hours || data.quantity) || 0;
+      if (hours <= 0) throw new Error('Hours must be > 0 for ' + empName);
+      var hourly = _manHourRateFor(empName);
+      if (!(hourly > 0)) throw new Error(empName + ' has no daily or monthly salary in the employee master.');
+      var amount = hours * hourly;
+      var row = new Array(MHC_TOTAL).fill('');
+      var id = idv.prefix + String(idv.next++).padStart(4, '0');
+      row[MHC.ID] = id;
+      row[MHC.ENTRY_DATE] = _s(entry.entry_date || data.date || Utilities.formatDate(new Date(),'GMT+5:30','yyyy-MM-dd'));
+      row[MHC.PROJECT] = project;
+      row[MHC.EMPLOYEE] = empName;
+      row[MHC.HOURS] = hours;
+      row[MHC.HOURLY_RATE] = hourly;
+      row[MHC.AMOUNT] = amount;
+      row[MHC.DESCRIPTION] = _s(data.description || '') || (empName + ' · ' + hours + 'h @ ₹' + hourly.toFixed(2) + '/h');
+      row[MHC.NOTES] = _s(data.notes || '');
+      row[MHC.STATUS] = 'Pending';
+      row[MHC.SUBMITTED_BY] = _s(entry.submitted_by || 'Finance');
+      row[MHC.SUBMISSION_DATE] = subDate;
+      row[MHC.DELETED] = 'No';
+      row[MHC.SUBCATEGORY] = 'Salary & Wages';
+      rows.push(row); ids.push(id);
+    });
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, MHC_TOTAL).setValues(rows);
+    SpreadsheetApp.flush();
+    return {success:true, count:rows.length, ids:ids};
+  } catch(err){
+    return {success:false, message:err.message};
+  }
+  finally { try { lock.releaseLock(); } catch(e){} }
+}
+
+// ============================================================
 // SUBMIT PROJECT COSTS  (Batch 7 — bulk entry from form)
 // ============================================================
 function submitProjectCosts(entries){
+  // Man-hour entries live in their own sheet. Route them there (before taking this lock: script locks are not reentrant).
+  var mhEntries = (entries || []).filter(function(e){ return _s(e && e.entry_type) === 'ManHours'; });
+  if (mhEntries.length){
+    var mhRes = submitManHourCosts(mhEntries);
+    if (!mhRes.success) return mhRes;
+    entries = entries.filter(function(e){ return _s(e && e.entry_type) !== 'ManHours'; });
+    if (!entries.length) return mhRes;
+  }
   var lock = LockService.getScriptLock();
   try { lock.waitLock(20000); } catch(e){ return {success:false, message:'Busy — try again.'}; }
   try {
@@ -348,34 +471,6 @@ function submitProjectCosts(entries){
         row[PCC.AMOUNT_EX_GST] = baseAmt;
         row[PCC.GST_RATE] = gstRate > 0 ? gstRate : '';
         row[PCC.AMOUNT] = baseAmt * gstMult;  // final Inc-GST
-      } else if (entryType === 'ManHours'){
-        // Labor cost = hours × (daily_rate / 8), or hours × (gross_monthly / 240) when no daily rate.
-        // Employee name is normalized against M_Employee master (typo guard).
-        var empName = _s(data.employee || data.materialName || '');
-        if (typeof _resolveEmployeeName === 'function'){
-          var _r = _resolveEmployeeName(empName);
-          if (!_r.ok) throw new Error('Row for ' + empName + ': ' + _r.message);
-          empName = _r.name;
-        }
-        var hours = _n(data.hours || data.quantity) || 0;
-        if (hours <= 0) throw new Error('Hours must be > 0 for ' + empName);
-        // Pull current rate from master so it reflects any salary change.
-        var emp = (typeof _findEmployee === 'function') ? _findEmployee(empName) : null;
-        var dailyRate = emp ? _n(emp.dailyRate) : 0;
-        var hourlyRate = dailyRate > 0
-          ? (dailyRate / 8)
-          : (emp ? (_n(emp.grossSalary) / 240) : 0);
-        row[PCC.MATERIAL_NAME] = empName;
-        row[PCC.QUANTITY] = hours;
-        row[PCC.UNIT] = 'Hours';
-        row[PCC.RATE_PER_UNIT] = hourlyRate;
-        var mhTotal = hours * hourlyRate;
-        row[PCC.AMOUNT_EX_GST] = mhTotal;  // own-labour: no GST
-        row[PCC.GST_RATE] = '';
-        row[PCC.AMOUNT] = mhTotal;
-        if (!row[PCC.DESCRIPTION]){
-          row[PCC.DESCRIPTION] = empName + ' · ' + hours + 'h @ ₹' + hourlyRate.toFixed(2) + '/h';
-        }
       } else {
         // Simple entry: data.amount is the BASE (ex-GST)
         var simpleBase = _n(data.amount) || 0;
@@ -415,6 +510,7 @@ function getProjectCostsRows(project, approvedOnly){
     var r = data[i];
     if(_s(r[PCC.DELETED]) === 'Yes') continue;
     if(_s(r[PCC.PROJECT]) !== project) continue;
+    if(_s(r[PCC.ENTRY_TYPE]) === 'ManHours') continue;   // old man-hour rows are listed by getManHourRows
     if(approvedOnly && _s(r[PCC.STATUS]) !== 'Approved') continue;
     var amt = _n(r[PCC.AMOUNT]) || 0;
     var hasGst = (r.length > PCC.GST_RATE) ? _n(r[PCC.GST_RATE]) : 0;
@@ -442,6 +538,37 @@ function getProjectCostsRows(project, approvedOnly){
   return {success:true, rows:rows, total:total, count:rows.length};
 }
 
+// Man-hour rows for one project: the Man_Hour_Costs sheet, plus any OLD man-hour rows still sitting in Project_Costs
+// (Entry_Type=ManHours, saved before the separate sheet existed). Row shape: {id,date,employee,hours,rate,amount,description,status,legacy}
+function getManHourRows(project, approvedOnly){
+  if(!project) return {success:false, error:'Project required', rows:[], total:0, hours:0};
+  var rows = [], total = 0, hours = 0;
+  var sh = _getManHourSheet();
+  if (_hasData(sh)){
+    sh.getRange(2,1,sh.getLastRow()-1,MHC_TOTAL).getValues().forEach(function(r){
+      if (_s(r[MHC.DELETED]) === 'Yes' || _s(r[MHC.PROJECT]) !== project) return;
+      if (approvedOnly && _s(r[MHC.STATUS]) !== 'Approved') return;
+      var a = _n(r[MHC.AMOUNT]) || 0, h = _n(r[MHC.HOURS]) || 0;
+      rows.push({id:_s(r[MHC.ID]), date:_safeDateStr(r[MHC.ENTRY_DATE]), employee:_s(r[MHC.EMPLOYEE]), hours:h,
+        rate:_n(r[MHC.HOURLY_RATE]) || 0, amount:a, description:_s(r[MHC.DESCRIPTION]), status:_s(r[MHC.STATUS]), legacy:false});
+      total += a; hours += h;
+    });
+  }
+  var pc = _getProjectCostsSheet();
+  if (_hasData(pc)){
+    pc.getRange(2,1,pc.getLastRow()-1,Math.min(pc.getLastColumn(), PCC_TOTAL)).getValues().forEach(function(r){
+      if (_s(r[PCC.ENTRY_TYPE]) !== 'ManHours' || _s(r[PCC.DELETED]) === 'Yes' || _s(r[PCC.PROJECT]) !== project) return;
+      if (approvedOnly && _s(r[PCC.STATUS]) !== 'Approved') return;
+      var a = _n(r[PCC.AMOUNT]) || 0, h = _n(r[PCC.QUANTITY]) || 0;
+      rows.push({id:_s(r[PCC.ID]), date:_safeDateStr(r[PCC.ENTRY_DATE]), employee:_s(r[PCC.MATERIAL_NAME]), hours:h,
+        rate:_n(r[PCC.RATE_PER_UNIT]) || 0, amount:a, description:_s(r[PCC.DESCRIPTION]), status:_s(r[PCC.STATUS]), legacy:true});
+      total += a; hours += h;
+    });
+  }
+  rows.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+  return {success:true, rows:rows, total:total, hours:hours, count:rows.length};
+}
+
 // Returns categories list with their groups, for dropdown population
 function getCategoriesForProjectCosts(){
   try {
@@ -459,6 +586,7 @@ function setupTransactionInfra(){
   _getPersonalSheet();
   _getTxnSheet(new Date());
   _getProjectCostsSheet();
+  _getManHourSheet();
   // Also ensure the prior-FY transaction tabs exist (empty), so old data
   // can be pasted in without first creating a transaction in that FY.
   var priorFys = ensurePriorFyTransactionSheets(['2024-25', '2025-26']);
@@ -2285,7 +2413,7 @@ function getProjectRollup(fy){
     var byProj = {};
     function _b(p){
       if (!byProj[p]) byProj[p] = {project:p, invoiced:0, received:0,
-        spentDirect:0, spentProjectCosts:0, spentBills:0};
+        spentDirect:0, spentProjectCosts:0, spentManHours:0, spentBills:0};
       return byProj[p];
     }
 
@@ -2328,7 +2456,21 @@ function getProjectRollup(fy){
         var proj = _s(r[PCC.PROJECT]);
         if (!proj) return;
         if (fy && _fyFromDate(r[PCC.ENTRY_DATE]) !== fy) return;
-        _b(proj).spentProjectCosts += _n(r[PCC.AMOUNT]) || 0;
+        // old man-hour rows (saved here before Man_Hour_Costs existed) count as man-hours, not material
+        if (_s(r[PCC.ENTRY_TYPE]) === 'ManHours') _b(proj).spentManHours += _n(r[PCC.AMOUNT]) || 0;
+        else _b(proj).spentProjectCosts += _n(r[PCC.AMOUNT]) || 0;
+      });
+    }
+
+    // 3b) Man_Hour_Costs rows (own labour, no GST).
+    var mhSheet = _getManHourSheet();
+    if (mhSheet && mhSheet.getLastRow() > 1){
+      mhSheet.getRange(2, 1, mhSheet.getLastRow()-1, MHC_TOTAL).getValues().forEach(function(r){
+        if (_s(r[MHC.DELETED]) === 'Yes') return;
+        var proj = _s(r[MHC.PROJECT]);
+        if (!proj) return;
+        if (fy && _fyFromDate(r[MHC.ENTRY_DATE]) !== fy) return;
+        _b(proj).spentManHours += _n(r[MHC.AMOUNT]) || 0;
       });
     }
 
@@ -2360,7 +2502,7 @@ function getProjectRollup(fy){
     var rows = [];
     Object.keys(byProj).forEach(function(p){
       var b = byProj[p];
-      var spent = b.spentDirect + b.spentProjectCosts + b.spentBills;
+      var spent = b.spentDirect + b.spentProjectCosts + b.spentManHours + b.spentBills;
       if ((b.invoiced || 0) === 0 && spent === 0) return;
       var budget = b.invoiced;
       var margin = b.invoiced - spent;
@@ -2372,6 +2514,7 @@ function getProjectRollup(fy){
         spent: _round(spent),
         spentDirect: _round(b.spentDirect),
         spentProjectCosts: _round(b.spentProjectCosts),
+        spentManHours: _round(b.spentManHours),
         spentBills: _round(b.spentBills),
         budget: _round(budget),
         variance: _round(budget - spent),
@@ -2399,7 +2542,7 @@ function getProjectOverviewV2(project, fy){
       }
     }
     row = row || {project:project, invoiced:0, received:0, spent:0,
-      spentDirect:0, spentProjectCosts:0, spentBills:0,
+      spentDirect:0, spentProjectCosts:0, spentManHours:0, spentBills:0,
       budget:0, variance:0, margin:0, marginPct:null};
 
     var costExGst = _computeProjectCostExGst(project, fy);
@@ -2419,6 +2562,7 @@ function getProjectOverviewV2(project, fy){
       spent: row.spent,
       spentDirect: row.spentDirect,
       spentProjectCosts: row.spentProjectCosts,
+      spentManHours: row.spentManHours,
       spentBills: row.spentBills,
       spentExGst: costExGst,
       budget: row.budget,
@@ -2482,6 +2626,15 @@ function _computeProjectCostExGst(project, fy){
       if (fy && _fyFromDate(r[PCC.ENTRY_DATE]) !== fy) return;
       var base = (pcW > PCC.AMOUNT_EX_GST) ? _n(r[PCC.AMOUNT_EX_GST]) : _n(r[PCC.AMOUNT]);
       total += base || 0;
+    });
+  }
+  var mhSheet = _getManHourSheet();   // own labour: no GST, Amount is the cost
+  if (mhSheet && mhSheet.getLastRow() > 1){
+    mhSheet.getRange(2, 1, mhSheet.getLastRow()-1, MHC_TOTAL).getValues().forEach(function(r){
+      if (_s(r[MHC.DELETED]) === 'Yes') return;
+      if (_s(r[MHC.PROJECT]) !== project) return;
+      if (fy && _fyFromDate(r[MHC.ENTRY_DATE]) !== fy) return;
+      total += _n(r[MHC.AMOUNT]) || 0;
     });
   }
   var txns = getAllTransactions(fy ? {fy:fy} : {}) || [];

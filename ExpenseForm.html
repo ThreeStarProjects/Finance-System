@@ -91,6 +91,7 @@
     <button class="ef-tab is-active" type="button" id="ef-tab-exp" role="tab" onclick="efShowTab('exp')">Submit Expense</button>
     <button class="ef-tab"           type="button" id="ef-tab-adv" role="tab" onclick="efShowTab('adv')">Request Advance</button>
     <button class="ef-tab"           type="button" id="ef-tab-pc"  role="tab" onclick="efShowTab('pc')">Project Costs</button>
+    <button class="ef-tab"           type="button" id="ef-tab-mh"  role="tab" onclick="efShowTab('mh')">Man-hours</button>
   </div>
 
   <!-- Expense tab -->
@@ -156,6 +157,18 @@
 
       <button class="btn btn--block btn--lg btn--primary" type="button" onclick="pcSubmitSingle()" style="margin-top:16px;" id="pc-submit-single-btn">Submit Project Cost</button>
     </div>
+  </div>
+
+  <!-- Man-hours tab: an employee logs the hours THEY worked on a project. Hours only: no rates or money are shown. -->
+  <div id="ef-pane-mh" style="display:none">
+    <div class="card">
+      <div class="card__title-row"><h2 class="card__title">Log my man-hours</h2>
+        <span class="muted small" id="mh-hint">Pick your name above first</span></div>
+      <div id="mh-blocks"></div>
+      <button class="add-block" type="button" onclick="mhAddBlock()">+ Add another entry</button>
+    </div>
+    <div class="total-bar"><span class="total-bar__lbl">Total hours</span><span class="total-bar__val" id="mh-tot">0 h</span></div>
+    <button class="btn btn--block btn--lg" id="mh-sub-btn" type="button" onclick="mhSubmit()">Submit Man-hours</button>
   </div>
 </main>
 <?!= include('_helpers') ?>
@@ -301,6 +314,10 @@ function efShowTab(key){
   var expActive = (key === 'exp');
   var advActive = (key === 'adv');
   var pcActive = (key === 'pc');
+  var mhActive = (key === 'mh');
+  $('ef-pane-mh').style.display = mhActive ? '' : 'none';
+  $('ef-tab-mh').classList.toggle('is-active', mhActive);
+  if (mhActive){ mhOnOpen(); }
   $('ef-pane-exp').style.display = expActive ? '' : 'none';
   $('ef-pane-adv').style.display = advActive ? '' : 'none';
   $('ef-pane-pc').style.display = pcActive ? '' : 'none';
@@ -767,6 +784,60 @@ function pcSubmitSingle(){
     console.error('pcSubmitSingle error:', e);
     toast('Error: ' + e.message, 'e');
   }
+}
+// ── Man-hours tab: the signed-in employee logs hours per project (saved to Finance → Man_Hour_Costs) ──
+var mhN = 0;
+function mhOnOpen(){
+  var hasEmp = !!($('emp').value || '').trim();
+  $('mh-hint').textContent = hasEmp ? 'Hours you worked on a project' : 'Pick your name above first';
+  if (!$('mh-blocks').children.length) mhAddBlock();
+}
+function mhAddBlock(){
+  mhN++; var i = mhN, d = document.createElement('div'); d.className = 'block'; d.id = 'mb' + i;
+  d.innerHTML =
+    '<div class="block__head"><span class="block__num">' + i + '</span>Entry ' + i + '</div>' +
+    (i > 1 ? '<button type="button" class="block__rm" onclick="mhRm(' + i + ')">✕</button>' : '') +
+    '<div class="grid-2">' +
+      '<div class="field"><label>Date *</label><input class="input" type="date" id="mhd' + i + '" value="' + todayISO() + '"></div>' +
+      '<div class="field"><label>Hours *</label><input class="input" type="number" id="mhh' + i + '" min="0" max="24" step="0.25" inputmode="decimal" placeholder="e.g. 8" oninput="mhTot()"></div>' +
+    '</div>' +
+    '<div class="field"><label>Project *</label><select class="select" id="mhp' + i + '">' + buildOptions(CFG.projects || [], 'Select project…') + '</select></div>' +
+    '<div class="field"><label>What did you work on? (optional)</label><input class="input" type="text" id="mhn' + i + '" maxlength="120"></div>';
+  $('mh-blocks').appendChild(d);
+}
+function mhRm(i){ var b = $('mb' + i); if (b) b.remove(); mhTot(); }
+function mhTot(){
+  var t = 0;
+  document.querySelectorAll('#mh-blocks [id^="mhh"]').forEach(function(el){ t += parseFloat(el.value) || 0; });
+  $('mh-tot').textContent = (Math.round(t * 100) / 100) + ' h';
+}
+function mhSubmit(){
+  var emp = ($('emp').value || '').trim();
+  if (!emp){ toast('Pick your name first', 'e'); return; }
+  var entries = [], bad = [];
+  document.querySelectorAll('#mh-blocks .block').forEach(function(b, n){
+    var i = b.id.substring(2);
+    var date = $('mhd' + i).value, proj = $('mhp' + i).value, hours = parseFloat($('mhh' + i).value) || 0, note = $('mhn' + i).value.trim();
+    if (!proj && !hours && !note) return;                       // untouched entry: ignore
+    var miss = [];
+    if (!date) miss.push('date'); if (!proj) miss.push('project');
+    if (!(hours > 0 && hours <= 24)) miss.push('hours (1 to 24)');
+    if (miss.length){ bad.push('Entry ' + (n + 1) + ': ' + miss.join(', ')); return; }
+    entries.push({ project: proj, entry_date: date, submitted_by: emp, data: { employee: emp, hours: hours, description: note } });
+  });
+  if (bad.length){ toast('Please fix: ' + bad.join(' | '), 'e'); return; }
+  if (!entries.length){ toast('Enter at least one entry', 'e'); return; }
+  var btn = $('mh-sub-btn'); btn.disabled = true; btn.textContent = 'Submitting…';
+  google.script.run
+    .withSuccessHandler(function(r){
+      btn.disabled = false; btn.textContent = 'Submit Man-hours';
+      if (r && r.success){
+        toast(r.count + ' man-hour entr' + (r.count === 1 ? 'y' : 'ies') + ' submitted', 's');
+        $('mh-blocks').innerHTML = ''; mhN = 0; mhAddBlock(); mhTot();
+      } else { toast(r && r.message ? r.message : 'Submission failed', 'e'); }
+    })
+    .withFailureHandler(function(e){ btn.disabled = false; btn.textContent = 'Submit Man-hours'; toast('Error: ' + e.message, 'e'); })
+    .submitManHourCosts(entries);
 }
 </script>
 </body>

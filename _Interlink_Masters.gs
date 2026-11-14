@@ -126,11 +126,13 @@ function IM_onOpen_() {
     .addItem('IMS material costs: import now', 'IM_importImsCostsNow')
     .addItem('IMS material costs: set subcategory…', 'IM_setCostSubcategory')
     .addItem('➕ Add employee',                'IM_addEmployeeDialog')
+    .addItem('Refresh employees from Masters', 'IM_syncEmployeesNow')
     .addSeparator()
     .addItem('❓ Start here',                  'IM_showStartHere')
     .addItem('About',                          'IM_about_')
     .addToUi();
   try { Masters.registerSystemSheet('finance', SpreadsheetApp.getActive().getId()); } catch (e) {}  // lets PM's project delete find this sheet
+  try { IM_syncEmployeesFromMasters_(); } catch (e) {}  // every approved Masters employee is in the Finance employee list (forms, man-hours, advances, salary)
   try { _getManHourSheet(); } catch (e) {}  // the Man_Hour_Costs sheet exists from the first open (project delete looks for it)
   try { IM_ensureImportTrigger_(); } catch (e) {}  // self-heal the 10-minute IMS cost import
   try { IM_syncFinanceProjects_(); } catch (e) {}  // every PM project is a Finance project (invoices / bills / customers can be tied to it)
@@ -399,6 +401,7 @@ function IM_importImsCostsNow() { IM_runImport_(false); }
 
 function IM_runImport_(quiet) {
   var res, proj = { added: 0, deactivated: 0, warnings: [] };
+  try { IM_syncEmployeesFromMasters_(); } catch (e) { Logger.log('Employee sync failed: ' + e.message); }   // the web-app users never open the sheet, so the 10-minute job does it too
   try { proj = IM_syncFinanceProjects_(); }                    // first: the PM projects must be Finance projects even if IMS is unreachable
   catch (e) { proj.warnings.push('Project list not synced: ' + e.message); }
   try { res = IM_importImsCosts(); }
@@ -539,4 +542,49 @@ function IM_addEmployeePost_(r, d) {
     if (f && f.success) return 'Also added to the Finance employee list. Next: enter the salary (Finance → Masters tab); payroll and man-hours cannot use this person until a daily or monthly salary is there.';
     return /already exists/i.test((f && f.message) || '') ? 'Already in the Finance employee list.' : 'Saved in Masters, but not added to the Finance list: ' + ((f && f.message) || 'unknown reason');
   } catch (e) { return 'Saved in Masters. Add the person in Finance → Masters tab too.'; }
+}
+
+// -----------------------------------------------------------------------------
+// Employees from Masters (item 8). Masters' Employees is the official list. Finance's M_Employee also holds the pay
+// terms, so it stays, but every ACTIVE Masters employee must be in it or the person cannot appear in the expense form,
+// man-hours, advances or salary. ADDITIVE: a missing person is appended with NO salary (the accountant enters it);
+// nobody already listed (active or not) is changed and nobody is removed. Names compared by IM_normName_ (case,
+// punctuation and spaces only, never fuzzy). Runs on open, every 10 minutes (with the IMS cost import) and by menu.
+// -----------------------------------------------------------------------------
+function IM_normName_(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+
+/** Returns { added: [names], busy }. Throws if Masters cannot be read. */
+function IM_syncEmployeesFromMasters_() {
+  var sh = _getSS().getSheetByName(P.EMPLOYEE);
+  if (!sh) return { added: [] };
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return { added: [], busy: true };
+  try {
+    var masters = IM_getEmployees() || [];
+    var have = {}, last = sh.getLastRow();
+    if (last >= 2) sh.getRange(2, 1, last - 1, 1).getValues().forEach(function (r) { var k = IM_normName_(r[0]); if (k) have[k] = true; });
+    var rows = [], names = [];
+    masters.forEach(function (e) {
+      var n = String(e.Name || '').replace(/\s+/g, ' ').trim(), k = IM_normName_(n);
+      if (!k || have[k] || String(e.Status) === 'Left') return;
+      have[k] = true;
+      names.push(n);   // order of EMC: Name | Email | Phone | Designation | Gross | Active | Holds_Float | Daily_Rate
+      rows.push([n, '', String(e.Phone || ''), String(e.Role || ''), '', 'Yes', String(e['Holds_Float?']) === 'Yes' ? 'Yes' : 'No', '']);
+    });
+    if (rows.length) sh.getRange(last + 1, 1, rows.length, EMC_TOTAL).setValues(rows);
+    return { added: names };
+  } finally { lock.releaseLock(); }
+}
+
+/** Menu: 🔗 Refresh employees from Masters. */
+function IM_syncEmployeesNow() {
+  var ss = SpreadsheetApp.getActive();
+  try {
+    try { IM_clearCache(); } catch (e) {}
+    var r = IM_syncEmployeesFromMasters_();
+    ss.toast(r.busy ? 'Another update is running. Try again in a minute.'
+      : r.added.length ? r.added.length + ' employee(s) added to the Finance employee list (' + r.added.slice(0, 4).join(', ') + (r.added.length > 4 ? ', …' : '') +
+        '). They have NO salary yet: enter it in the Masters tab before payroll or man-hours can use them.'
+      : 'The Finance employee list already has every active Masters employee.', '🔗 Interlink', 10);
+  } catch (e) { ss.toast('Could not read Masters: ' + e.message, '🔗 Interlink', 10); }
 }

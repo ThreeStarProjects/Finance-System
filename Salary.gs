@@ -17,8 +17,8 @@
 
 var P = { EMPLOYEE:'M_Employee', PROJECT:'M_Project', SALARY:'Salary' };
 
-// M_Employee is now an automatic COPY of Masters' Employees (the single employee sheet). Edit people in Finance → Masters tab
-// (saved to Masters first) or in Masters; typing straight into this sheet is overwritten by the next sync.
+// Employees live ONLY in Masters' Employees sheet. EMC / EMC_TOTAL describe the OLD local M_Employee sheet, which is read
+// only while it is being retired (see getEmployeeMasterData and IM_retireEmployeeSheet_).
 var EMC = { NAME:0, EMAIL:1, PHONE:2, DESIG:3, GROSS:4, ACTIVE:5, HOLDS_FLOAT:6, DAILY_RATE:7, DEPT:8 };
 var EMC_TOTAL = 9;
 var EMPLOYEE_HEADERS = ['Name','Email','Phone','Designation','Gross_Monthly_Salary','Active','Holds_Float','Daily_Rate','Department'];
@@ -43,86 +43,69 @@ var SALARY_WIDTHS = [190,150,80,80,120,110,100,110,100,90,110,130,100,110,120,13
 // ============================================================
 function setupPayroll(){
   var ss = _getSS();
-  // Capture the schema state BEFORE _buildSheet / _validateCol calls — these
-  // can extend the column count of an existing narrow sheet by applying
-  // validation to a previously-empty column, masking the upgrade signal.
-  var existing = ss.getSheetByName(P.EMPLOYEE);
-  var needsHoldsFloatUpgrade = false;
-  var needsDailyRateUpgrade  = false;
-  if (existing){
-    var headers = existing.getRange(1, 1, 1, Math.max(existing.getLastColumn(), 1)).getValues()[0];
-    needsHoldsFloatUpgrade = headers.indexOf('Holds_Float') === -1;
-    needsDailyRateUpgrade  = headers.indexOf('Daily_Rate')  === -1;
-  }
-
-  var emp = _buildSheet(ss, P.EMPLOYEE, EMPLOYEE_HEADERS, EMPLOYEE_WIDTHS);
-  _validateCol(emp, EMC.ACTIVE+1, ['Yes','No']);
-
-  // Apply the Holds_Float upgrade if the header was missing from the live sheet
-  if (needsHoldsFloatUpgrade){
-    emp.getRange(1, EMC.HOLDS_FLOAT+1).setValue('Holds_Float').setFontWeight('bold');
-    emp.setColumnWidth(EMC.HOLDS_FLOAT+1, 110);
-    var lr = emp.getLastRow();
-    if (lr >= 2){
-      var defaults = new Array(lr-1).fill(['No']);
-      emp.getRange(2, EMC.HOLDS_FLOAT+1, lr-1, 1).setValues(defaults);
-    }
-  }
-  // Validate the Holds_Float column (after upgrade so the header sits next to it)
-  _validateCol(emp, EMC.HOLDS_FLOAT+1, ['Yes','No']);
-
-  // Apply the Daily_Rate upgrade if the header was missing.
-  // Historical rows stay blank (means: use monthly-gross calculation as before).
-  if (needsDailyRateUpgrade){
-    emp.getRange(1, EMC.DAILY_RATE+1).setValue('Daily_Rate').setFontWeight('bold');
-    emp.setColumnWidth(EMC.DAILY_RATE+1, 110);
-    // No back-fill — blank means "not a daily-rate employee".
-  }
-
+  // Employees are NOT a Finance sheet any more: Masters' Employees sheet is the only source (see IM_getEmployees).
   var proj = _buildSheet(ss, P.PROJECT, PROJECT_HEADERS, PROJECT_WIDTHS);
   _validateCol(proj, PRC.ACTIVE+1, ['Yes','No']);
   var sal = _buildSheet(ss, P.SALARY, SALARY_HEADERS, SALARY_WIDTHS);
   sal.getRange(2, SC.MONTH+1, 5000, 1).setNumberFormat('@STRING@');
-  var msg = 'Payroll ready:\n• '+P.EMPLOYEE+'\n• '+P.PROJECT+'\n• '+P.SALARY +
-            (needsHoldsFloatUpgrade ? '\n\nAdded new column: Holds_Float (back-filled "No" on existing rows).' : '');
+  var msg = 'Payroll ready:\n• '+P.PROJECT+'\n• '+P.SALARY+'\n\nEmployees come from the Masters spreadsheet (Employees sheet).';
   try { SpreadsheetApp.getUi().alert(msg); } catch(e){ Logger.log(msg); }
-  return {success:true, message:msg, upgraded:needsHoldsFloatUpgrade};
+  return {success:true, message:msg};
 }
 
 // ============================================================
-// EMPLOYEE MASTER
+// EMPLOYEE MASTER  — the only source is MASTERS' Employees sheet
 // ============================================================
+// Every employee screen / payroll / advance / man-hour call reads this. Fields come from Masters (Role = designation).
+// TRANSITION ONLY: while the old local sheet M_Employee still exists (IM_retireEmployeeSheet_ deletes it once everything in it is
+// safely in Masters), it fills any field Masters leaves blank and keeps Finance-only people visible, so nothing disappears mid-move.
+function getEmployeeMasterData(){
+  try {
+    var out = [], at = {};
+    (IM_getEmployees() || []).forEach(function(m){
+      var n = _s(m.Name).replace(/\s+/g,' ');
+      if (!n) return;
+      var k = IM_normName_(n); if (at[k] !== undefined) return;
+      at[k] = out.push({
+        name:n, email:_s(m.Email), phone:_s(m.Phone), designation:_s(m.Role), department:_s(m.Department),
+        grossSalary:_n(m.Gross_Monthly_Salary), dailyRate:_n(m.Daily_Rate), holdsFloat:_s(m['Holds_Float?'])==='Yes',
+        active:_s(m.Status)!=='Left', id:_s(m.Emp_ID)
+      }) - 1;
+    });
+    var old = _getSS().getSheetByName(P.EMPLOYEE);
+    if (old && old.getLastRow() > 1){
+      var w = Math.min(old.getLastColumn(), EMC_TOTAL);
+      old.getRange(2,1,old.getLastRow()-1,w).getValues().forEach(function(r){
+        var n = _s(r[EMC.NAME]); if (!n) return;
+        var k = IM_normName_(n), i = at[k];
+        var L = { email:_s(r[EMC.EMAIL]), phone:_s(r[EMC.PHONE]), designation:_s(r[EMC.DESIG]), department:(w > EMC.DEPT ? _s(r[EMC.DEPT]) : ''),
+                  grossSalary:_n(r[EMC.GROSS]), dailyRate:(w > EMC.DAILY_RATE ? _n(r[EMC.DAILY_RATE]) : 0) };
+        if (i === undefined){
+          at[k] = out.push({ name:n, email:L.email, phone:L.phone, designation:L.designation, department:L.department, grossSalary:L.grossSalary,
+            dailyRate:L.dailyRate, holdsFloat:(w > EMC.HOLDS_FLOAT && _s(r[EMC.HOLDS_FLOAT])==='Yes'), active:_s(r[EMC.ACTIVE])!=='No', id:'', localOnly:true }) - 1;
+          return;
+        }
+        var e = out[i];
+        if (!e.email) e.email = L.email;
+        if (!e.phone) e.phone = L.phone;
+        if (!e.designation) e.designation = L.designation;
+        if (!e.department) e.department = L.department;
+        if (!e.grossSalary) e.grossSalary = L.grossSalary;
+        if (!e.dailyRate) e.dailyRate = L.dailyRate;
+      });
+    }
+    return out;
+  } catch(e){ Logger.log('getEmployeeMasterData: '+e.message); return []; }
+}
 function getEmployeeNames(){
   try {
-    var sheet = _getSS().getSheetByName(P.EMPLOYEE);
-    if (!sheet || sheet.getLastRow()<2) return [];
-    var w = Math.min(sheet.getLastColumn(), EMC_TOTAL);
-    var names = sheet.getRange(2,1,sheet.getLastRow()-1,w).getValues()
-      .filter(function(r){ return _s(r[EMC.NAME]) && _s(r[EMC.ACTIVE]) !== 'No'; })
-      .map(function(r){ return _s(r[EMC.NAME]); });
+    var names = getEmployeeMasterData().filter(function(e){ return e.active; }).map(function(e){ return e.name; });
     names.sort(function(a,b){
       var x = a.toLowerCase(), y = b.toLowerCase();
       return x < y ? -1 : x > y ? 1 : 0;
     });
     return names;
   } catch(e){ Logger.log('getEmployeeNames: '+e.message); return []; }
-}
-function getEmployeeMasterData(){
-  try {
-    var sheet = _getSS().getSheetByName(P.EMPLOYEE);
-    if (!sheet || sheet.getLastRow()<2) return [];
-    var w = Math.min(sheet.getLastColumn(), EMC_TOTAL);
-    return sheet.getRange(2,1,sheet.getLastRow()-1,w).getValues()
-      .filter(function(r){ return _s(r[EMC.NAME]); })
-      .map(function(r){ return {
-        name:_s(r[EMC.NAME]), email:_s(r[EMC.EMAIL]), phone:_s(r[EMC.PHONE]),
-        designation:_s(r[EMC.DESIG]), grossSalary:_n(r[EMC.GROSS]),
-        active:_s(r[EMC.ACTIVE])!=='No',
-        holdsFloat: (w > EMC.HOLDS_FLOAT) ? (_s(r[EMC.HOLDS_FLOAT]) === 'Yes') : false,
-        dailyRate:  (w > EMC.DAILY_RATE)  ? _n(r[EMC.DAILY_RATE]) : 0,
-        department: (w > EMC.DEPT)        ? _s(r[EMC.DEPT]) : ''
-      }; });
-  } catch(e){ return []; }
 }
 function getEmployeeSalaryMap(){
   var map = {};
@@ -153,23 +136,7 @@ function _findEmployee(name){
   for (var i=0; i<list.length; i++){ if (list[i].name === n) return list[i]; }
   return null;
 }
-// Whole-sheet rewrite of the local COPY. No longer used by add / update (they save to Masters first); kept for compatibility.
-function saveEmployeeMaster(employees){
-  try {
-    var sheet = _getSS().getSheetByName(P.EMPLOYEE);
-    if (sheet.getLastRow() > 1) sheet.getRange(2,1,sheet.getLastRow()-1,EMC_TOTAL).clearContent();
-    if (employees && employees.length)
-      sheet.getRange(2,1,employees.length,EMC_TOTAL).setValues(employees.map(function(e){
-        return [_s(e.name),_s(e.email),_s(e.phone),_s(e.designation),_n(e.grossSalary),
-                e.active===false?'No':'Yes',
-                e.holdsFloat===true?'Yes':'No',
-                _n(e.dailyRate), _s(e.department)];
-      }));
-    return {success:true, count:(employees||[]).length};
-  } catch(e){ return {success:false, message:e.message}; }
-}
-
-// Add an employee. The person is created in MASTERS (the single employee sheet), then copied into M_Employee.
+// Add an employee. The person is created in MASTERS (the only employee sheet); every Finance screen reads it from there.
 //   data = {name, email, phone, designation, department, grossSalary, dailyRate, holdsFloat}
 function addEmployee(data){
   if (!_s(data.name)) return {success:false, message:'Name required.'};
@@ -181,10 +148,10 @@ function addEmployee(data){
     });
     if (!r.ok) return {success:false, message: r.duplicate ? 'Employee already exists (' + r.duplicate.id + ').' : 'Could not add the employee.'};
     try { IM_clearCache(); } catch(e){}
-    IM_syncEmployeesFromMasters_();
     return {success:true, count:getEmployeeMasterData().length, id:r.id};
   } catch(e){ return {success:false, message:IM_employeeSaveError_(e)}; }
 }
+
 // ============================================================
 // PROJECT MASTER
 // ============================================================
@@ -237,8 +204,7 @@ function addProject(data){
   return saveProjectMaster(projs);
 }
 
-// Update an existing employee, matched by original name. Saved to MASTERS first (the single employee sheet); only then is the
-// M_Employee copy row updated, in place (a rename keeps the row). If Masters refuses, nothing changes here.
+// Update an existing employee, matched by original name. Saved to MASTERS (the only employee sheet). If Masters refuses, nothing changes.
 //   data = {originalName, name, email, phone, designation, department, grossSalary, dailyRate, holdsFloat, active}
 function updateEmployee(data){
   var orig = _s(data.originalName || data.name);
@@ -268,22 +234,6 @@ function updateEmployee(data){
   };
   var pushed = IM_pushEmployeeToMasters_(orig, e);
   if (!pushed.ok) return {success:false, message:pushed.message};
-  var lock = LockService.getScriptLock();
-  try { lock.waitLock(15000); }
-  catch(x){ return {success:true, message:'Saved in Masters. The Finance copy follows within 10 minutes.', name:newName}; }
-  try {
-    var sheet = _getSS().getSheetByName(P.EMPLOYEE);
-    IM_ensureEmployeeColumns_(sheet);
-    var last = sheet.getLastRow();
-    var names = last >= 2 ? sheet.getRange(2,1,last-1,1).getValues() : [];
-    for (var k=0;k<names.length;k++){
-      if (_s(names[k][0]).toLowerCase() === orig.toLowerCase()){
-        sheet.getRange(k+2,1,1,EMC_TOTAL).setValues([[e.name, e.email, e.phone, e.designation, e.grossSalary,
-          e.active ? 'Yes' : 'No', e.holdsFloat ? 'Yes' : 'No', e.dailyRate, e.department]]);
-        break;
-      }
-    }
-  } finally { lock.releaseLock(); }
   return {success:true, message:'Employee updated.', name:newName};
 }
 

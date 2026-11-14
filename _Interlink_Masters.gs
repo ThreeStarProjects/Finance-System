@@ -27,7 +27,24 @@ var IM_CACHE_KEY  = 'IM_v' + IM_VERSION + '_';
 // -----------------------------------------------------------------------------
 function IM_getProjects()  { return IM_cache_('projects',  function () { return Masters.getProjects(); }); }
 function IM_getCustomers() { return IM_cache_('customers', function () { return Masters.getCustomers(); }); }
-function IM_getEmployees() { return IM_cache_('employees', function () { return Masters.getEmployees(); }); }
+/**
+ * Employees are read by every payroll / form call, so keep a 6-hour fallback copy: if Masters cannot be read right now, the last
+ * good list is used (payroll never stops because of a short outage). Throws only if there is no copy at all.
+ */
+function IM_getEmployees() {
+  var cache = CacheService.getScriptCache();
+  try {
+    return IM_cache_('employees', function () {
+      var fresh = Masters.getEmployees();
+      try { var str = JSON.stringify(fresh); if (str.length < 95000) cache.put(IM_CACHE_KEY + 'employees_stale', str, 21600); } catch (_) {}
+      return fresh;
+    });
+  } catch (e) {
+    var old = cache.get(IM_CACHE_KEY + 'employees_stale');
+    if (old) { try { return JSON.parse(old); } catch (_) {} }
+    throw e;
+  }
+}
 function IM_getSites()     { return IM_cache_('sites',     function () { return Masters.getSites(); }); }
 
 /**
@@ -132,7 +149,7 @@ function IM_onOpen_() {
     .addItem('About',                          'IM_about_')
     .addToUi();
   try { Masters.registerSystemSheet('finance', SpreadsheetApp.getActive().getId()); } catch (e) {}  // lets PM's project delete find this sheet
-  try { IM_syncEmployeesFromMasters_(); } catch (e) {}  // Masters' Employees is the one sheet: refresh the M_Employee copy (forms, man-hours, advances, salary read it)
+  try { IM_retireEmployeeSheet_({ copyUp: false }); } catch (e) {}  // the old M_Employee sheet is removed as soon as everything in it is safely in Masters
   try { _getManHourSheet(); } catch (e) {}  // the Man_Hour_Costs sheet exists from the first open (project delete looks for it)
   try { IM_ensureImportTrigger_(); } catch (e) {}  // self-heal the 10-minute IMS cost import
   try { IM_syncFinanceProjects_(); } catch (e) {}  // every PM project is a Finance project (invoices / bills / customers can be tied to it)
@@ -401,7 +418,7 @@ function IM_importImsCostsNow() { IM_runImport_(false); }
 
 function IM_runImport_(quiet) {
   var res, proj = { added: 0, deactivated: 0, warnings: [] };
-  try { IM_syncEmployeesFromMasters_({ copyUp: true }); } catch (e) { Logger.log('Employee sync failed: ' + e.message); }   // the web-app users never open the sheet, so the 10-minute job does it too
+  try { IM_retireEmployeeSheet_({ copyUp: true }); } catch (e) { Logger.log('Employee move to Masters failed: ' + e.message); }   // the 10-minute job also finishes moving pay terms into Masters
   try { proj = IM_syncFinanceProjects_(); }                    // first: the PM projects must be Finance projects even if IMS is unreachable
   catch (e) { proj.warnings.push('Project list not synced: ' + e.message); }
   try { res = IM_importImsCosts(); }
@@ -535,24 +552,17 @@ function IM_addEmployee(d) {
       ? 'Only Masters editors can add employees. Ask the administrator to add you as an editor, or ask them to add this person.' : m };
   }
 }
-/** Finance: the person is already in Masters; copy them into M_Employee now. Pay terms are entered in the Finance Masters tab. */
+/** Finance: the person is in Masters, which every Finance screen reads: nothing else to copy. Pay terms are edited in the Masters tab. */
 function IM_addEmployeePost_(r, d) {
-  try {
-    IM_syncEmployeesFromMasters_();
-    return 'Also added to the Finance employee list. Next: enter the pay terms (Finance → Masters tab, Edit): payroll, advances and man-hours cannot use this person until a daily or monthly salary is there.';
-  } catch (e) { return 'Saved in Masters. The Finance list follows within 10 minutes (or use Refresh employees from Masters).'; }
+  return 'Available in every Finance screen now. Next: enter the pay terms (Finance → Masters tab, Edit): payroll, advances and man-hours cannot use this person until a daily or monthly salary is there.';
 }
 
 // -----------------------------------------------------------------------------
-// Employees: ONE sheet, in Masters (Employees). Finance's M_Employee is an automatic COPY of it, so payroll, advances,
-// man-hours and every form keep reading M_Employee exactly as before (fast, and still works if Masters is briefly down).
-//   Masters → M_Employee : designation (Role), department, email, phone, salary, daily rate, Holds_Float, Active (= Status).
-//                          A person Masters has but M_Employee lacks is appended; nobody is ever removed.
-//   Masters wins whenever it HAS a value. Where Masters is still BLANK, Finance's value is kept and (when copyUp is on) copied
-//   up into Masters once, so existing pay terms migrate without anyone retyping them. A blank in Masters never blanks Finance.
-//   Finance → Masters    : the Finance Masters tab (add / edit employee) saves to Masters first, then to this copy.
-// Names compared by IM_normName_ (case, punctuation, spaces only, never fuzzy). Runs on open (copy only: fast), every 10 minutes
-// with the IMS cost import (also copies up) and by the menu.
+// Employees: Masters' Employees sheet is the ONLY source of employee names and pay terms. Every Finance screen reads it
+// through getEmployeeMasterData() (Salary.gs; Masters list cached 5 min, plus a 6-hour fallback copy if Masters is briefly
+// unreachable). The old local sheet M_Employee is retired by IM_retireEmployeeSheet_ below, but ONLY once everything in it is
+// safely in Masters; until then it still fills blanks, so nothing disappears during the move.
+// Names compared by IM_normName_ (case, punctuation, spaces only, never fuzzy).
 // -----------------------------------------------------------------------------
 function IM_normName_(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 
@@ -562,15 +572,6 @@ function IM_employeeSaveError_(e) {
   return /Editors only|Admin only|permission|access/i.test(m)
     ? 'Only Masters editors can add or change employees. Ask the administrator to add you as an editor.'
     : 'Could not save to Masters: ' + m;
-}
-
-/** M_Employee must have room and a header for every column (older sheets stop at Daily_Rate). Only fills blanks. */
-function IM_ensureEmployeeColumns_(sh) {
-  if (sh.getMaxColumns() < EMC_TOTAL) sh.insertColumnsAfter(sh.getMaxColumns(), EMC_TOTAL - sh.getMaxColumns());
-  var cur = sh.getRange(1, 1, 1, EMC_TOTAL).getValues()[0];
-  for (var i = 0; i < EMC_TOTAL; i++) {
-    if (String(cur[i]).trim() === '') sh.getRange(1, i + 1).setValue(EMPLOYEE_HEADERS[i]).setFontWeight('bold');
-  }
 }
 
 /**
@@ -605,83 +606,85 @@ function IM_pushEmployeeToMasters_(orig, e) {
 var IM_EMP_COPYUP_MAX = 15;   // Masters writes per run (each is about a second); the rest follows on the next run
 
 /**
- * opts: { copyUp: bool }. Returns { added:[names], updated:n, copiedUp:n, copyFailed:n, moreToCopy:n, busy }. Throws if Masters cannot be read.
+ * Retire the old local employee sheet M_Employee.
+ *   1. (copyUp) whatever Finance has that Masters lacks (designation, phone, email, department, salary, daily rate) is copied UP
+ *      into Masters, only into blank fields, 15 people per run. Needs a Masters editor; otherwise it is simply skipped.
+ *   2. Verify: every ACTIVE person in M_Employee is in Masters, and none of their details is still missing in Masters.
+ *   3. Only if that is true is the sheet DELETED. Otherwise it stays (and still fills blanks for the readers) and the result says why.
+ * Returns { state: 'gone' | 'removed' | 'blocked', n, notInMasters:[], pending, copiedUp, copyFailed, moreToCopy, busy }.
  */
-function IM_syncEmployeesFromMasters_(opts) {
+function IM_retireEmployeeSheet_(opts) {
   opts = opts || {};
-  var sh = _getSS().getSheetByName(P.EMPLOYEE);
-  var res = { added: [], updated: 0, copiedUp: 0, copyFailed: 0, moreToCopy: 0 };
-  if (!sh) return res;
+  var ss = _getSS(), sh = ss.getSheetByName(P.EMPLOYEE);
+  if (!sh) return { state: 'gone' };
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) { res.busy = true; return res; }
+  if (!lock.tryLock(15000)) return { state: 'blocked', busy: true, notInMasters: [], pending: 0, copiedUp: 0, copyFailed: 0, moreToCopy: 0 };
   try {
-    if (opts.copyUp) { try { Masters.ensureEmployeeLayout(); } catch (x) {} }   // puts the Masters sheet's columns in order (editors only; harmless otherwise)
-    var masters = IM_getEmployees() || [];
-    IM_ensureEmployeeColumns_(sh);
-    var last = sh.getLastRow();
-    var rows = last >= 2 ? sh.getRange(2, 1, last - 1, EMC_TOTAL).getValues() : [];
-    var at = {};
-    rows.forEach(function (r, i) { var k = IM_normName_(r[EMC.NAME]); if (k && at[k] === undefined) at[k] = i; });
+    var res = { state: 'blocked', n: 0, notInMasters: [], pending: 0, copiedUp: 0, copyFailed: 0, moreToCopy: 0 };
+    if (opts.copyUp) { try { Masters.ensureEmployeeLayout(); } catch (x) {} }
+    var last = sh.getLastRow(), cols = Math.min(Math.max(sh.getLastColumn(), 1), EMC_TOTAL);
+    var local = last >= 2 ? sh.getRange(2, 1, last - 1, cols).getValues().map(function (r) { while (r.length < EMC_TOTAL) r.push(''); return r; }) : [];
+    local = local.filter(function (r) { return String(r[EMC.NAME]).trim() !== ''; });
+    res.n = local.length;
     var txt = function (v) { return String(v == null ? '' : v).trim(); };
     var num = function (v) { var x = Number(v); return isNaN(x) ? 0 : x; };
-    var pick = function (m, f) { return txt(m) !== '' ? txt(m) : txt(f); };            // Masters when it has a value, else keep Finance
-    var pickN = function (m, f) { return txt(m) !== '' ? num(m) : num(f); };
-    var changed = [], appended = [], seen = {};
-    masters.forEach(function (e) {
-      var n = txt(e.Name).replace(/\s+/g, ' '), k = IM_normName_(n);
-      if (!k || seen[k]) return; seen[k] = true;
-      var active = String(e.Status) !== 'Left';
-      var i = at[k];
-      if (i === undefined) {
-        if (!active) return;
-        res.added.push(n);   // Name | Email | Phone | Designation | Gross | Active | Holds_Float | Daily_Rate | Department
-        appended.push([n, txt(e.Email), txt(e.Phone), txt(e.Role), txt(e.Gross_Monthly_Salary) !== '' ? num(e.Gross_Monthly_Salary) : '', 'Yes',
-          String(e['Holds_Float?']) === 'Yes' ? 'Yes' : 'No', txt(e.Daily_Rate) !== '' ? num(e.Daily_Rate) : '', txt(e.Department)]);
-        return;
+    var load = function () { var by = {}; (IM_getEmployees() || []).forEach(function (e) { var k = IM_normName_(e.Name); if (k && !by[k]) by[k] = e; }); return by; };
+    var by = load();
+    // what Finance has that Masters lacks, per person
+    var gaps = function (r, e) {
+      var up = {};
+      if (txt(e.Role) === '' && txt(r[EMC.DESIG]) !== '') up.Role = txt(r[EMC.DESIG]);
+      if (txt(e.Phone) === '' && txt(r[EMC.PHONE]) !== '') up.Phone = txt(r[EMC.PHONE]);
+      if (txt(e.Email) === '' && txt(r[EMC.EMAIL]) !== '') up.Email = txt(r[EMC.EMAIL]);
+      if (txt(e.Department) === '' && txt(r[EMC.DEPT]) !== '') up.Department = txt(r[EMC.DEPT]);
+      if (txt(e.Gross_Monthly_Salary) === '' && num(r[EMC.GROSS]) > 0) up.Gross_Monthly_Salary = num(r[EMC.GROSS]);
+      if (txt(e.Daily_Rate) === '' && num(r[EMC.DAILY_RATE]) > 0) up.Daily_Rate = num(r[EMC.DAILY_RATE]);
+      return up;
+    };
+    if (opts.copyUp) {
+      var batch = [];
+      local.forEach(function (r) {
+        var e = by[IM_normName_(r[EMC.NAME])]; if (!e) return;
+        var up = gaps(r, e);
+        if (Object.keys(up).length) { if (batch.length < IM_EMP_COPYUP_MAX) batch.push(Object.assign({ Name: e.Name }, up)); else res.moreToCopy++; }
+      });
+      if (batch.length) {
+        try { var f = Masters.fillEmployeeBlanks(batch); res.copiedUp = f.filled; }
+        catch (x) { res.copyFailed = batch.length; }   // not a Masters editor: nothing lost, the sheet just stays
+        try { IM_clearCache(); } catch (x) {}
+        by = load();
       }
-      var r = rows[i];
-      if (opts.copyUp) {   // fields Masters lacks but Finance has: copy up (once; then Masters has them)
-        var up = {};
-        if (txt(e.Role) === '' && txt(r[EMC.DESIG]) !== '') up.Role = txt(r[EMC.DESIG]);
-        if (txt(e.Phone) === '' && txt(r[EMC.PHONE]) !== '') up.Phone = txt(r[EMC.PHONE]);
-        if (txt(e.Email) === '' && txt(r[EMC.EMAIL]) !== '') up.Email = txt(r[EMC.EMAIL]);
-        if (txt(e.Department) === '' && txt(r[EMC.DEPT]) !== '') up.Department = txt(r[EMC.DEPT]);
-        if (txt(e.Gross_Monthly_Salary) === '' && num(r[EMC.GROSS]) > 0) up.Gross_Monthly_Salary = num(r[EMC.GROSS]);
-        if (txt(e.Daily_Rate) === '' && num(r[EMC.DAILY_RATE]) > 0) up.Daily_Rate = num(r[EMC.DAILY_RATE]);
-        if (Object.keys(up).length) {
-          if (res.copiedUp + res.copyFailed >= IM_EMP_COPYUP_MAX) res.moreToCopy++;
-          else {
-            try { Masters.updateEmployee(e.Emp_ID, up); res.copiedUp++; }
-            catch (x) { res.copyFailed++; }   // not a Masters editor: harmless, Finance keeps its values
-          }
-        }
-      }
-      var want = [r[EMC.NAME], pick(e.Email, r[EMC.EMAIL]), pick(e.Phone, r[EMC.PHONE]), pick(e.Role, r[EMC.DESIG]), pickN(e.Gross_Monthly_Salary, r[EMC.GROSS]),
-        active ? 'Yes' : 'No', pick(e['Holds_Float?'], r[EMC.HOLDS_FLOAT]) === 'Yes' ? 'Yes' : 'No', pickN(e.Daily_Rate, r[EMC.DAILY_RATE]), pick(e.Department, r[EMC.DEPT])];
-      var same = txt(r[EMC.EMAIL]) === want[1] && txt(r[EMC.PHONE]) === want[2] && txt(r[EMC.DESIG]) === want[3] && num(r[EMC.GROSS]) === want[4] &&
-        txt(r[EMC.ACTIVE]) === want[5] && txt(r[EMC.HOLDS_FLOAT]) === want[6] && num(r[EMC.DAILY_RATE]) === want[7] && txt(r[EMC.DEPT]) === want[8];
-      if (!same) { rows[i] = want; changed.push(i); }
+    }
+    local.forEach(function (r) {
+      var e = by[IM_normName_(r[EMC.NAME])], active = txt(r[EMC.ACTIVE]) !== 'No';
+      if (!e) { if (active) res.notInMasters.push(txt(r[EMC.NAME])); return; }
+      if (Object.keys(gaps(r, e)).length) res.pending++;
     });
-    changed.forEach(function (i) { sh.getRange(i + 2, 1, 1, EMC_TOTAL).setValues([rows[i]]); });
-    res.updated = changed.length;
-    if (appended.length) sh.getRange(last + 1, 1, appended.length, EMC_TOTAL).setValues(appended);
-    if (res.copiedUp) { try { IM_clearCache(); } catch (x) {} }
+    if (!res.notInMasters.length && !res.pending && !res.moreToCopy) {
+      ss.deleteSheet(sh);
+      res.state = 'removed';
+    }
     return res;
   } finally { lock.releaseLock(); }
 }
 
-/** Menu: 🔗 Refresh employees from Masters. */
+/** Menu: 🔗 Refresh employees from Masters. Clears the cached list, finishes the move of pay terms into Masters, retires the old sheet. */
 function IM_syncEmployeesNow() {
   var ss = SpreadsheetApp.getActive();
   try {
     try { IM_clearCache(); } catch (e) {}
-    var r = IM_syncEmployeesFromMasters_({ copyUp: true }), parts = [];
-    if (r.busy) { ss.toast('Another update is running. Try again in a minute.', '🔗 Interlink', 8); return; }
-    if (r.added.length) parts.push(r.added.length + ' employee(s) added (' + r.added.slice(0, 4).join(', ') + (r.added.length > 4 ? ', …' : '') + '). Enter their pay terms in Finance → Masters tab if payroll needs them');
-    if (r.updated) parts.push(r.updated + ' updated from Masters');
-    if (r.copiedUp) parts.push('pay details of ' + r.copiedUp + ' employee(s) copied up into Masters');
-    if (r.moreToCopy) parts.push(r.moreToCopy + ' more will be copied on the next run');
-    if (r.copyFailed) parts.push('only Masters editors can copy pay details up: ' + r.copyFailed + ' skipped');
-    ss.toast(parts.length ? parts.join(' · ') : 'The Finance employee list is already the same as Masters.', '🔗 Interlink', 12);
+    var count = (IM_getEmployees() || []).filter(function (e) { return String(e.Status) !== 'Left' && String(e.Name || '').trim() !== ''; }).length;
+    var r = IM_retireEmployeeSheet_({ copyUp: true }), msg;
+    if (r.state === 'gone') msg = 'Employees come only from Masters: ' + count + ' active employee(s) are available in every Finance screen.';
+    else if (r.state === 'removed') msg = 'Done: all ' + r.n + ' people and their pay terms are in Masters' + (r.copiedUp ? ' (pay details of ' + r.copiedUp + ' copied up just now)' : '') + '. The old M_Employee sheet was removed. ' + count + ' active employee(s) now come only from Masters.';
+    else {
+      var why = [];
+      if (r.busy) why.push('another update is running, try again in a minute');
+      if (r.notInMasters.length) why.push(r.notInMasters.length + ' active person(s) are not in Masters (' + r.notInMasters.slice(0, 5).join(', ') + (r.notInMasters.length > 5 ? ', …' : '') + '): add them with ➕ Add employee or make them inactive');
+      if (r.copyFailed) why.push('only Masters editors can copy pay details into Masters (' + r.copyFailed + ' waiting)');
+      else if (r.pending || r.moreToCopy) why.push((r.pending + r.moreToCopy) + ' person(s) still have pay details to copy' + (r.moreToCopy ? ' (the rest on the next run)' : ''));
+      msg = 'The old M_Employee sheet is kept for now: ' + why.join('; ') + '.';
+    }
+    ss.toast(msg, '🔗 Interlink', 15);
   } catch (e) { ss.toast('Could not read Masters: ' + e.message, '🔗 Interlink', 10); }
 }

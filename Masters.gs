@@ -472,6 +472,7 @@ function addParty(data){
   var r = _addPartyCore(data);
   // A new CUSTOMER is copied to Masters right away (after the lock above is released) so IMS / PM can offer it. Best effort: the 10-minute job retries.
   if (r && r.success && r.partyType === 'Customer') { try { IM_syncCustomersToMasters_(); } catch(e){} }
+  else if (r && r.success && r.partyType === 'Vendor') { try { IM_syncVendorsToMasters_(); } catch(e){} }
   return r;
 }
 function _addPartyCore(data){

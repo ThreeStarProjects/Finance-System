@@ -469,6 +469,12 @@ function _nextPartyId(sheet, partyType){
 // Add a customer or vendor. Returns {success, id} or {success:false, message}.
 // data = {partyType, name, gstin, email, phone, address, openingBalance}
 function addParty(data){
+  var r = _addPartyCore(data);
+  // A new CUSTOMER is copied to Masters right away (after the lock above is released) so IMS / PM can offer it. Best effort: the 10-minute job retries.
+  if (r && r.success && r.partyType === 'Customer') { try { IM_syncCustomersToMasters_(); } catch(e){} }
+  return r;
+}
+function _addPartyCore(data){
   var lock = LockService.getScriptLock();
   try { lock.waitLock(15000); } catch(e){ return {success:false, message:'Busy, try again.'}; }
   try {

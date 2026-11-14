@@ -2484,7 +2484,12 @@
           <div class="field"><label>Phone</label><input class="input" id="m-ne-phone" /></div>
           <div class="field"><label>Designation</label><input class="input" id="m-ne-desig" /></div>
         </div>
+        <div class="grid-2">
+          <div class="field"><label>Department</label><input class="input" id="m-ne-dept" /></div>
+          <div class="field"><label>Daily rate (₹) — casuals only</label><input class="input" type="number" min="0" id="m-ne-daily" /></div>
+        </div>
         <div class="field"><label>Gross monthly salary (₹)</label><input class="input" type="number" id="m-ne-sal" /></div>
+        <div class="small muted" style="margin-bottom:8px;">Saved in the Masters Employees sheet (the one employee list for all systems). Only Masters editors can add or change employees.</div>
         <button class="btn" onclick="mAddEmp()">+ Add</button>
       </div>
     </div>
@@ -8567,13 +8572,15 @@ function mAddEmp(){
     email: $('m-ne-email').value.trim(),
     phone: $('m-ne-phone').value.trim(),
     designation: $('m-ne-desig').value.trim(),
+    department: $('m-ne-dept').value.trim(),
+    dailyRate: parseFloat($('m-ne-daily').value)||0,
     grossSalary: parseFloat($('m-ne-sal').value)||0
   };
   if (!data.name){ toast('Name required','err'); return; }
   callServer('addEmployee', [data], function(res){
     if (!res || !res.success){ toast((res && res.message) || 'Failed','err'); return; }
     toast('Added', 'ok');
-    ['m-ne-name','m-ne-email','m-ne-phone','m-ne-desig','m-ne-sal'].forEach(function(id){ $(id).value=''; });
+    ['m-ne-name','m-ne-email','m-ne-phone','m-ne-desig','m-ne-dept','m-ne-daily','m-ne-sal'].forEach(function(id){ $(id).value=''; });
     mLoadEmps(); refreshMasters({silent:true});
   });
 }
@@ -8649,6 +8656,7 @@ function mEditEmp(i){
         '<div class="field"><label>Phone</label><input class="input" id="ee-phone" value="'+esc(e.phone||'')+'"></div>' +
         '<div class="field"><label>Designation</label><input class="input" id="ee-desig" value="'+esc(e.designation||'')+'"></div>' +
       '</div>' +
+      '<div class="field"><label>Department</label><input class="input" id="ee-dept" value="'+esc(e.department||'')+'"></div>' +
       '<div class="grid-2">' +
         '<div class="field"><label>Gross salary (₹)</label><input class="input" type="number" id="ee-gross" value="'+(e.grossSalary||0)+'"></div>' +
         '<div class="field"><label>Active</label><select class="select" id="ee-active">' +
@@ -8676,7 +8684,7 @@ function mEditEmp(i){
 function mSaveEmp(orig){
   var data = { originalName: orig, name: $('ee-name').value.trim(),
     email: $('ee-email').value.trim(), phone: $('ee-phone').value.trim(),
-    designation: $('ee-desig').value.trim(), grossSalary: parseFloat($('ee-gross').value)||0,
+    designation: $('ee-desig').value.trim(), department: $('ee-dept').value.trim(), grossSalary: parseFloat($('ee-gross').value)||0,
     active: $('ee-active').value === 'yes',
     holdsFloat: !!($('ee-float') && $('ee-float').checked),
     dailyRate: parseFloat($('ee-daily').value)||0 };

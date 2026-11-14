@@ -132,7 +132,7 @@ function IM_onOpen_() {
     .addItem('About',                          'IM_about_')
     .addToUi();
   try { Masters.registerSystemSheet('finance', SpreadsheetApp.getActive().getId()); } catch (e) {}  // lets PM's project delete find this sheet
-  try { IM_syncEmployeesFromMasters_(); } catch (e) {}  // every approved Masters employee is in the Finance employee list (forms, man-hours, advances, salary)
+  try { IM_syncEmployeesFromMasters_(); } catch (e) {}  // Masters' Employees is the one sheet: refresh the M_Employee copy (forms, man-hours, advances, salary read it)
   try { _getManHourSheet(); } catch (e) {}  // the Man_Hour_Costs sheet exists from the first open (project delete looks for it)
   try { IM_ensureImportTrigger_(); } catch (e) {}  // self-heal the 10-minute IMS cost import
   try { IM_syncFinanceProjects_(); } catch (e) {}  // every PM project is a Finance project (invoices / bills / customers can be tied to it)
@@ -401,7 +401,7 @@ function IM_importImsCostsNow() { IM_runImport_(false); }
 
 function IM_runImport_(quiet) {
   var res, proj = { added: 0, deactivated: 0, warnings: [] };
-  try { IM_syncEmployeesFromMasters_(); } catch (e) { Logger.log('Employee sync failed: ' + e.message); }   // the web-app users never open the sheet, so the 10-minute job does it too
+  try { IM_syncEmployeesFromMasters_({ copyUp: true }); } catch (e) { Logger.log('Employee sync failed: ' + e.message); }   // the web-app users never open the sheet, so the 10-minute job does it too
   try { proj = IM_syncFinanceProjects_(); }                    // first: the PM projects must be Finance projects even if IMS is unreachable
   catch (e) { proj.warnings.push('Project list not synced: ' + e.message); }
   try { res = IM_importImsCosts(); }
@@ -520,13 +520,13 @@ function IM_showStartHere() {
 // once. Masters editors only (every Masters write is). Masters refuses an exact duplicate and warns on a similar name.
 // -----------------------------------------------------------------------------
 function IM_addEmployeeDialog() {
-  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(IM_addEmployeeHtml_()).setWidth(430).setHeight(430), '➕ Add employee');
+  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(IM_addEmployeeHtml_()).setWidth(430).setHeight(500), '➕ Add employee');
 }
-function IM_addEmployeeHtml_() { return "<div style=\"font:14px Arial,sans-serif;padding:14px;color:#222\">\n<p style=\"margin:0 0 12px;color:#555\">The person is saved in <b>Masters</b>, the official employee list. The other systems pick the name up from there.</p>\n<label>Full name *</label><input id=\"n\" maxlength=\"80\" style=\"width:100%;padding:7px;margin:3px 0 10px;box-sizing:border-box\">\n<label>Role (optional)</label><input id=\"r\" maxlength=\"60\" style=\"width:100%;padding:7px;margin:3px 0 10px;box-sizing:border-box\">\n<label>Phone (optional)</label><input id=\"p\" maxlength=\"30\" style=\"width:100%;padding:7px;margin:3px 0 10px;box-sizing:border-box\">\n<div id=\"m\" style=\"min-height:42px;margin:6px 0;font-size:13px\"></div>\n<button id=\"go\" onclick=\"send(false)\" style=\"padding:8px 16px;background:#1F4E79;color:#fff;border:0;border-radius:4px;cursor:pointer\">Add employee</button>\n<button id=\"any\" onclick=\"send(true)\" style=\"display:none;padding:8px 16px;background:#b45309;color:#fff;border:0;border-radius:4px;cursor:pointer\">Add anyway (different person)</button>\n<button onclick=\"google.script.host.close()\" style=\"padding:8px 16px;margin-left:6px;border:1px solid #bbb;background:#fff;border-radius:4px;cursor:pointer\">Close</button>\n</div>\n<script>\nfunction $(i){return document.getElementById(i);}\nfunction say(t,c){var m=$('m');m.textContent=t;m.style.color=c||'#222';}\nfunction busy(b){$('go').disabled=b;$('any').disabled=b;}\nfunction send(confirm){\n  var name=$('n').value.replace(/\\s+/g,' ').trim();\n  if(!name){say('Please type the name.','#b91c1c');return;}\n  busy(true);say('Saving\u2026');\n  google.script.run.withSuccessHandler(done).withFailureHandler(function(e){busy(false);say('Could not save: '+(e&&e.message||e),'#b91c1c');})\n    .IM_addEmployee({name:name,role:$('r').value,phone:$('p').value,confirmSimilar:confirm===true});\n}\nfunction done(r){\n  busy(false);$('any').style.display='none';\n  if(r&&r.ok){say('Added '+r.name+' ('+r.id+'). '+(r.note||''),'#166534');$('go').style.display='none';$('n').disabled=$('r').disabled=$('p').disabled=true;}\n  else if(r&&r.duplicate){say(r.duplicate.name+' is already in Masters ('+r.duplicate.id+', '+r.duplicate.status+'). Nothing was added.','#b45309');}\n  else if(r&&r.similar){say('Similar name(s) already in Masters: '+r.similar.map(function(s){return s.name+' ('+s.id+', '+s.status+')';}).join('; ')+'. If this is the same person, close this window. If it is a different person, click Add anyway.','#b45309');$('any').style.display='inline-block';}\n  else{say((r&&r.error)||'Something went wrong.','#b91c1c');}\n}\n</script>"; }
+function IM_addEmployeeHtml_() { return "<div style=\"font:14px Arial,sans-serif;padding:14px;color:#222\">\n<p style=\"margin:0 0 12px;color:#555\">The person is saved in <b>Masters</b>, the official employee list. The other systems pick the name up from there.</p>\n<label>Full name *</label><input id=\"n\" maxlength=\"80\" style=\"width:100%;padding:7px;margin:3px 0 10px;box-sizing:border-box\">\n<label>Role (optional)</label><input id=\"r\" maxlength=\"60\" style=\"width:100%;padding:7px;margin:3px 0 10px;box-sizing:border-box\">\n<label>Department (optional)</label><input id=\"d\" maxlength=\"60\" style=\"width:100%;padding:7px;margin:3px 0 10px;box-sizing:border-box\">\n<label>Phone (optional)</label><input id=\"p\" maxlength=\"30\" style=\"width:100%;padding:7px;margin:3px 0 10px;box-sizing:border-box\">\n<div id=\"m\" style=\"min-height:42px;margin:6px 0;font-size:13px\"></div>\n<button id=\"go\" onclick=\"send(false)\" style=\"padding:8px 16px;background:#1F4E79;color:#fff;border:0;border-radius:4px;cursor:pointer\">Add employee</button>\n<button id=\"any\" onclick=\"send(true)\" style=\"display:none;padding:8px 16px;background:#b45309;color:#fff;border:0;border-radius:4px;cursor:pointer\">Add anyway (different person)</button>\n<button onclick=\"google.script.host.close()\" style=\"padding:8px 16px;margin-left:6px;border:1px solid #bbb;background:#fff;border-radius:4px;cursor:pointer\">Close</button>\n</div>\n<script>\nfunction $(i){return document.getElementById(i);}\nfunction say(t,c){var m=$('m');m.textContent=t;m.style.color=c||'#222';}\nfunction busy(b){$('go').disabled=b;$('any').disabled=b;}\nfunction send(confirm){\n  var name=$('n').value.replace(/\\s+/g,' ').trim();\n  if(!name){say('Please type the name.','#b91c1c');return;}\n  busy(true);say('Saving\u2026');\n  google.script.run.withSuccessHandler(done).withFailureHandler(function(e){busy(false);say('Could not save: '+(e&&e.message||e),'#b91c1c');})\n    .IM_addEmployee({name:name,role:$('r').value,department:$('d').value,phone:$('p').value,confirmSimilar:confirm===true});\n}\nfunction done(r){\n  busy(false);$('any').style.display='none';\n  if(r&&r.ok){say('Added '+r.name+' ('+r.id+'). '+(r.note||''),'#166534');$('go').style.display='none';$('n').disabled=$('r').disabled=$('d').disabled=$('p').disabled=true;}\n  else if(r&&r.duplicate){say(r.duplicate.name+' is already in Masters ('+r.duplicate.id+', '+r.duplicate.status+'). Nothing was added.','#b45309');}\n  else if(r&&r.similar){say('Similar name(s) already in Masters: '+r.similar.map(function(s){return s.name+' ('+s.id+', '+s.status+')';}).join('; ')+'. If this is the same person, close this window. If it is a different person, click Add anyway.','#b45309');$('any').style.display='inline-block';}\n  else{say((r&&r.error)||'Something went wrong.','#b91c1c');}\n}\n</script>"; }
 /** Called by the dialog. Returns { ok, id, name, note } | { ok:false, duplicate | similar | error }. Never throws. */
 function IM_addEmployee(d) {
   try {
-    var r = Masters.addEmployeeChecked({ Name: d.name, Role: d.role, Phone: d.phone, confirmSimilar: d.confirmSimilar === true });
+    var r = Masters.addEmployeeChecked({ Name: d.name, Role: d.role, Department: d.department, Phone: d.phone, confirmSimilar: d.confirmSimilar === true });
     if (r.ok) { try { IM_clearCache(); } catch (e) {} r.note = IM_addEmployeePost_(r, d); }
     return r;
   } catch (e) {
@@ -535,44 +535,137 @@ function IM_addEmployee(d) {
       ? 'Only Masters editors can add employees. Ask the administrator to add you as an editor, or ask them to add this person.' : m };
   }
 }
-/** Finance: the person is also added to the Finance employee list (M_Employee) with NO salary yet. */
+/** Finance: the person is already in Masters; copy them into M_Employee now. Pay terms are entered in the Finance Masters tab. */
 function IM_addEmployeePost_(r, d) {
   try {
-    var f = addEmployee({ name: r.name, phone: d.phone, designation: d.role });
-    if (f && f.success) return 'Also added to the Finance employee list. Next: enter the salary (Finance → Masters tab); payroll and man-hours cannot use this person until a daily or monthly salary is there.';
-    return /already exists/i.test((f && f.message) || '') ? 'Already in the Finance employee list.' : 'Saved in Masters, but not added to the Finance list: ' + ((f && f.message) || 'unknown reason');
-  } catch (e) { return 'Saved in Masters. Add the person in Finance → Masters tab too.'; }
+    IM_syncEmployeesFromMasters_();
+    return 'Also added to the Finance employee list. Next: enter the pay terms (Finance → Masters tab, Edit): payroll, advances and man-hours cannot use this person until a daily or monthly salary is there.';
+  } catch (e) { return 'Saved in Masters. The Finance list follows within 10 minutes (or use Refresh employees from Masters).'; }
 }
 
 // -----------------------------------------------------------------------------
-// Employees from Masters (item 8). Masters' Employees is the official list. Finance's M_Employee also holds the pay
-// terms, so it stays, but every ACTIVE Masters employee must be in it or the person cannot appear in the expense form,
-// man-hours, advances or salary. ADDITIVE: a missing person is appended with NO salary (the accountant enters it);
-// nobody already listed (active or not) is changed and nobody is removed. Names compared by IM_normName_ (case,
-// punctuation and spaces only, never fuzzy). Runs on open, every 10 minutes (with the IMS cost import) and by menu.
+// Employees: ONE sheet, in Masters (Employees). Finance's M_Employee is an automatic COPY of it, so payroll, advances,
+// man-hours and every form keep reading M_Employee exactly as before (fast, and still works if Masters is briefly down).
+//   Masters → M_Employee : designation (Role), department, email, phone, salary, daily rate, Holds_Float, Active (= Status).
+//                          A person Masters has but M_Employee lacks is appended; nobody is ever removed.
+//   Masters wins whenever it HAS a value. Where Masters is still BLANK, Finance's value is kept and (when copyUp is on) copied
+//   up into Masters once, so existing pay terms migrate without anyone retyping them. A blank in Masters never blanks Finance.
+//   Finance → Masters    : the Finance Masters tab (add / edit employee) saves to Masters first, then to this copy.
+// Names compared by IM_normName_ (case, punctuation, spaces only, never fuzzy). Runs on open (copy only: fast), every 10 minutes
+// with the IMS cost import (also copies up) and by the menu.
 // -----------------------------------------------------------------------------
 function IM_normName_(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 
-/** Returns { added: [names], busy }. Throws if Masters cannot be read. */
-function IM_syncEmployeesFromMasters_() {
+/** Plain-language text for a failed save to Masters. */
+function IM_employeeSaveError_(e) {
+  var m = String((e && e.message) || e);
+  return /Editors only|Admin only|permission|access/i.test(m)
+    ? 'Only Masters editors can add or change employees. Ask the administrator to add you as an editor.'
+    : 'Could not save to Masters: ' + m;
+}
+
+/** M_Employee must have room and a header for every column (older sheets stop at Daily_Rate). Only fills blanks. */
+function IM_ensureEmployeeColumns_(sh) {
+  if (sh.getMaxColumns() < EMC_TOTAL) sh.insertColumnsAfter(sh.getMaxColumns(), EMC_TOTAL - sh.getMaxColumns());
+  var cur = sh.getRange(1, 1, 1, EMC_TOTAL).getValues()[0];
+  for (var i = 0; i < EMC_TOTAL; i++) {
+    if (String(cur[i]).trim() === '') sh.getRange(1, i + 1).setValue(EMPLOYEE_HEADERS[i]).setFontWeight('bold');
+  }
+}
+
+/**
+ * Save one employee's details to Masters (used by the Finance Masters tab). orig = the name as it is now.
+ * e = { name, email, phone, designation, department, grossSalary, dailyRate, holdsFloat, active }.
+ * Returns { ok } or { ok:false, message }. Nothing is changed in Masters if it refuses.
+ */
+function IM_pushEmployeeToMasters_(orig, e) {
+  try {
+    try { IM_clearCache(); } catch (x) {}
+    var list = IM_getEmployees() || [], ko = IM_normName_(orig), kn = IM_normName_(e.name), mine = null, clash = null;
+    list.forEach(function (m) { if (!mine && IM_normName_(m.Name) === ko) mine = m; });
+    list.forEach(function (m) { if (!clash && IM_normName_(m.Name) === kn && (!mine || m.Emp_ID !== mine.Emp_ID)) clash = m; });
+    if (clash) return { ok: false, message: 'Another employee in Masters already has that name (' + clash.Emp_ID + ').' };
+    var today = Utilities.formatDate(new Date(), 'GMT+5:30', 'yyyy-MM-dd');
+    var fields = { Name: e.name, Role: e.designation, Phone: e.phone, Email: e.email, Department: e.department,
+      Gross_Monthly_Salary: e.grossSalary, Daily_Rate: e.dailyRate, 'Holds_Float?': e.holdsFloat ? 'Yes' : 'No', Status: e.active ? 'Active' : 'Left' };
+    fields.Left_Date = e.active ? '' : ((mine && mine.Left_Date) || today);
+    if (mine) Masters.updateEmployee(mine.Emp_ID, fields);
+    else {
+      // a Finance-only person: adopt into Masters, then apply the rest
+      var r = Masters.addEmployeeChecked({ Name: e.name, Role: e.designation, Phone: e.phone, Email: e.email, Department: e.department,
+        Gross_Monthly_Salary: e.grossSalary || '', Daily_Rate: e.dailyRate || '', 'Holds_Float?': e.holdsFloat ? 'Yes' : 'No', confirmSimilar: true });
+      if (!r.ok) return { ok: false, message: 'Employee already exists in Masters' + (r.duplicate ? ' (' + r.duplicate.id + ').' : '.') };
+      if (!e.active) Masters.updateEmployee(r.id, { Status: 'Left', Left_Date: today });
+    }
+    try { IM_clearCache(); } catch (x) {}
+    return { ok: true };
+  } catch (x) { return { ok: false, message: IM_employeeSaveError_(x) }; }
+}
+
+var IM_EMP_COPYUP_MAX = 15;   // Masters writes per run (each is about a second); the rest follows on the next run
+
+/**
+ * opts: { copyUp: bool }. Returns { added:[names], updated:n, copiedUp:n, copyFailed:n, moreToCopy:n, busy }. Throws if Masters cannot be read.
+ */
+function IM_syncEmployeesFromMasters_(opts) {
+  opts = opts || {};
   var sh = _getSS().getSheetByName(P.EMPLOYEE);
-  if (!sh) return { added: [] };
+  var res = { added: [], updated: 0, copiedUp: 0, copyFailed: 0, moreToCopy: 0 };
+  if (!sh) return res;
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) return { added: [], busy: true };
+  if (!lock.tryLock(15000)) { res.busy = true; return res; }
   try {
     var masters = IM_getEmployees() || [];
-    var have = {}, last = sh.getLastRow();
-    if (last >= 2) sh.getRange(2, 1, last - 1, 1).getValues().forEach(function (r) { var k = IM_normName_(r[0]); if (k) have[k] = true; });
-    var rows = [], names = [];
+    IM_ensureEmployeeColumns_(sh);
+    var last = sh.getLastRow();
+    var rows = last >= 2 ? sh.getRange(2, 1, last - 1, EMC_TOTAL).getValues() : [];
+    var at = {};
+    rows.forEach(function (r, i) { var k = IM_normName_(r[EMC.NAME]); if (k && at[k] === undefined) at[k] = i; });
+    var txt = function (v) { return String(v == null ? '' : v).trim(); };
+    var num = function (v) { var x = Number(v); return isNaN(x) ? 0 : x; };
+    var pick = function (m, f) { return txt(m) !== '' ? txt(m) : txt(f); };            // Masters when it has a value, else keep Finance
+    var pickN = function (m, f) { return txt(m) !== '' ? num(m) : num(f); };
+    var changed = [], appended = [], seen = {};
     masters.forEach(function (e) {
-      var n = String(e.Name || '').replace(/\s+/g, ' ').trim(), k = IM_normName_(n);
-      if (!k || have[k] || String(e.Status) === 'Left') return;
-      have[k] = true;
-      names.push(n);   // order of EMC: Name | Email | Phone | Designation | Gross | Active | Holds_Float | Daily_Rate
-      rows.push([n, '', String(e.Phone || ''), String(e.Role || ''), '', 'Yes', String(e['Holds_Float?']) === 'Yes' ? 'Yes' : 'No', '']);
+      var n = txt(e.Name).replace(/\s+/g, ' '), k = IM_normName_(n);
+      if (!k || seen[k]) return; seen[k] = true;
+      var active = String(e.Status) !== 'Left';
+      var i = at[k];
+      if (i === undefined) {
+        if (!active) return;
+        res.added.push(n);   // Name | Email | Phone | Designation | Gross | Active | Holds_Float | Daily_Rate | Department
+        appended.push([n, txt(e.Email), txt(e.Phone), txt(e.Role), txt(e.Gross_Monthly_Salary) !== '' ? num(e.Gross_Monthly_Salary) : '', 'Yes',
+          String(e['Holds_Float?']) === 'Yes' ? 'Yes' : 'No', txt(e.Daily_Rate) !== '' ? num(e.Daily_Rate) : '', txt(e.Department)]);
+        return;
+      }
+      var r = rows[i];
+      if (opts.copyUp) {   // fields Masters lacks but Finance has: copy up (once; then Masters has them)
+        var up = {};
+        if (txt(e.Role) === '' && txt(r[EMC.DESIG]) !== '') up.Role = txt(r[EMC.DESIG]);
+        if (txt(e.Phone) === '' && txt(r[EMC.PHONE]) !== '') up.Phone = txt(r[EMC.PHONE]);
+        if (txt(e.Email) === '' && txt(r[EMC.EMAIL]) !== '') up.Email = txt(r[EMC.EMAIL]);
+        if (txt(e.Department) === '' && txt(r[EMC.DEPT]) !== '') up.Department = txt(r[EMC.DEPT]);
+        if (txt(e.Gross_Monthly_Salary) === '' && num(r[EMC.GROSS]) > 0) up.Gross_Monthly_Salary = num(r[EMC.GROSS]);
+        if (txt(e.Daily_Rate) === '' && num(r[EMC.DAILY_RATE]) > 0) up.Daily_Rate = num(r[EMC.DAILY_RATE]);
+        if (Object.keys(up).length) {
+          if (res.copiedUp + res.copyFailed >= IM_EMP_COPYUP_MAX) res.moreToCopy++;
+          else {
+            try { Masters.updateEmployee(e.Emp_ID, up); res.copiedUp++; }
+            catch (x) { res.copyFailed++; }   // not a Masters editor: harmless, Finance keeps its values
+          }
+        }
+      }
+      var want = [r[EMC.NAME], pick(e.Email, r[EMC.EMAIL]), pick(e.Phone, r[EMC.PHONE]), pick(e.Role, r[EMC.DESIG]), pickN(e.Gross_Monthly_Salary, r[EMC.GROSS]),
+        active ? 'Yes' : 'No', pick(e['Holds_Float?'], r[EMC.HOLDS_FLOAT]) === 'Yes' ? 'Yes' : 'No', pickN(e.Daily_Rate, r[EMC.DAILY_RATE]), pick(e.Department, r[EMC.DEPT])];
+      var same = txt(r[EMC.EMAIL]) === want[1] && txt(r[EMC.PHONE]) === want[2] && txt(r[EMC.DESIG]) === want[3] && num(r[EMC.GROSS]) === want[4] &&
+        txt(r[EMC.ACTIVE]) === want[5] && txt(r[EMC.HOLDS_FLOAT]) === want[6] && num(r[EMC.DAILY_RATE]) === want[7] && txt(r[EMC.DEPT]) === want[8];
+      if (!same) { rows[i] = want; changed.push(i); }
     });
-    if (rows.length) sh.getRange(last + 1, 1, rows.length, EMC_TOTAL).setValues(rows);
-    return { added: names };
+    changed.forEach(function (i) { sh.getRange(i + 2, 1, 1, EMC_TOTAL).setValues([rows[i]]); });
+    res.updated = changed.length;
+    if (appended.length) sh.getRange(last + 1, 1, appended.length, EMC_TOTAL).setValues(appended);
+    if (res.copiedUp) { try { IM_clearCache(); } catch (x) {} }
+    return res;
   } finally { lock.releaseLock(); }
 }
 
@@ -581,10 +674,13 @@ function IM_syncEmployeesNow() {
   var ss = SpreadsheetApp.getActive();
   try {
     try { IM_clearCache(); } catch (e) {}
-    var r = IM_syncEmployeesFromMasters_();
-    ss.toast(r.busy ? 'Another update is running. Try again in a minute.'
-      : r.added.length ? r.added.length + ' employee(s) added to the Finance employee list (' + r.added.slice(0, 4).join(', ') + (r.added.length > 4 ? ', …' : '') +
-        '). They have NO salary yet: enter it in the Masters tab before payroll or man-hours can use them.'
-      : 'The Finance employee list already has every active Masters employee.', '🔗 Interlink', 10);
+    var r = IM_syncEmployeesFromMasters_({ copyUp: true }), parts = [];
+    if (r.busy) { ss.toast('Another update is running. Try again in a minute.', '🔗 Interlink', 8); return; }
+    if (r.added.length) parts.push(r.added.length + ' employee(s) added (' + r.added.slice(0, 4).join(', ') + (r.added.length > 4 ? ', …' : '') + '). Enter their pay terms in Finance → Masters tab if payroll needs them');
+    if (r.updated) parts.push(r.updated + ' updated from Masters');
+    if (r.copiedUp) parts.push('pay details of ' + r.copiedUp + ' employee(s) copied up into Masters');
+    if (r.moreToCopy) parts.push(r.moreToCopy + ' more will be copied on the next run');
+    if (r.copyFailed) parts.push('only Masters editors can copy pay details up: ' + r.copyFailed + ' skipped');
+    ss.toast(parts.length ? parts.join(' · ') : 'The Finance employee list is already the same as Masters.', '🔗 Interlink', 12);
   } catch (e) { ss.toast('Could not read Masters: ' + e.message, '🔗 Interlink', 10); }
 }

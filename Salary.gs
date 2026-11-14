@@ -17,10 +17,12 @@
 
 var P = { EMPLOYEE:'M_Employee', PROJECT:'M_Project', SALARY:'Salary' };
 
-var EMC = { NAME:0, EMAIL:1, PHONE:2, DESIG:3, GROSS:4, ACTIVE:5, HOLDS_FLOAT:6, DAILY_RATE:7 };
-var EMC_TOTAL = 8;
-var EMPLOYEE_HEADERS = ['Name','Email','Phone','Designation','Gross_Monthly_Salary','Active','Holds_Float','Daily_Rate'];
-var EMPLOYEE_WIDTHS = [220,240,140,180,180,80,110,110];
+// M_Employee is now an automatic COPY of Masters' Employees (the single employee sheet). Edit people in Finance → Masters tab
+// (saved to Masters first) or in Masters; typing straight into this sheet is overwritten by the next sync.
+var EMC = { NAME:0, EMAIL:1, PHONE:2, DESIG:3, GROSS:4, ACTIVE:5, HOLDS_FLOAT:6, DAILY_RATE:7, DEPT:8 };
+var EMC_TOTAL = 9;
+var EMPLOYEE_HEADERS = ['Name','Email','Phone','Designation','Gross_Monthly_Salary','Active','Holds_Float','Daily_Rate','Department'];
+var EMPLOYEE_WIDTHS = [220,240,140,180,180,80,110,110,160];
 
 var PRC = { CODE:0, NAME:1, ACTIVE:2 };
 var PRC_TOTAL = 3;
@@ -117,7 +119,8 @@ function getEmployeeMasterData(){
         designation:_s(r[EMC.DESIG]), grossSalary:_n(r[EMC.GROSS]),
         active:_s(r[EMC.ACTIVE])!=='No',
         holdsFloat: (w > EMC.HOLDS_FLOAT) ? (_s(r[EMC.HOLDS_FLOAT]) === 'Yes') : false,
-        dailyRate:  (w > EMC.DAILY_RATE)  ? _n(r[EMC.DAILY_RATE]) : 0
+        dailyRate:  (w > EMC.DAILY_RATE)  ? _n(r[EMC.DAILY_RATE]) : 0,
+        department: (w > EMC.DEPT)        ? _s(r[EMC.DEPT]) : ''
       }; });
   } catch(e){ return []; }
 }
@@ -150,6 +153,7 @@ function _findEmployee(name){
   for (var i=0; i<list.length; i++){ if (list[i].name === n) return list[i]; }
   return null;
 }
+// Whole-sheet rewrite of the local COPY. No longer used by add / update (they save to Masters first); kept for compatibility.
 function saveEmployeeMaster(employees){
   try {
     var sheet = _getSS().getSheetByName(P.EMPLOYEE);
@@ -159,22 +163,28 @@ function saveEmployeeMaster(employees){
         return [_s(e.name),_s(e.email),_s(e.phone),_s(e.designation),_n(e.grossSalary),
                 e.active===false?'No':'Yes',
                 e.holdsFloat===true?'Yes':'No',
-                _n(e.dailyRate)];
+                _n(e.dailyRate), _s(e.department)];
       }));
     return {success:true, count:(employees||[]).length};
   } catch(e){ return {success:false, message:e.message}; }
 }
-function addEmployee(data){
-  var emps = getEmployeeMasterData();
-  if (!_s(data.name)) return {success:false, message:'Name required.'};
-  var lower = _s(data.name).toLowerCase();
-  for (var i=0;i<emps.length;i++){ if (emps[i].name.toLowerCase() === lower) return {success:false, message:'Employee already exists.'}; }
-  emps.push({name:_s(data.name), email:_s(data.email), phone:_s(data.phone),
-             designation:_s(data.designation), grossSalary:_n(data.grossSalary),
-             dailyRate:_n(data.dailyRate), active:true});
-  return saveEmployeeMaster(emps);
-}
 
+// Add an employee. The person is created in MASTERS (the single employee sheet), then copied into M_Employee.
+//   data = {name, email, phone, designation, department, grossSalary, dailyRate, holdsFloat}
+function addEmployee(data){
+  if (!_s(data.name)) return {success:false, message:'Name required.'};
+  try {
+    var r = Masters.addEmployeeChecked({
+      Name:_s(data.name), Role:_s(data.designation), Phone:_s(data.phone), Department:_s(data.department), Email:_s(data.email),
+      Gross_Monthly_Salary:_n(data.grossSalary) || '', Daily_Rate:_n(data.dailyRate) || '',
+      'Holds_Float?': data.holdsFloat === true ? 'Yes' : 'No', confirmSimilar:true   // the accountant typed this on purpose
+    });
+    if (!r.ok) return {success:false, message: r.duplicate ? 'Employee already exists (' + r.duplicate.id + ').' : 'Could not add the employee.'};
+    try { IM_clearCache(); } catch(e){}
+    IM_syncEmployeesFromMasters_();
+    return {success:true, count:getEmployeeMasterData().length, id:r.id};
+  } catch(e){ return {success:false, message:IM_employeeSaveError_(e)}; }
+}
 // ============================================================
 // PROJECT MASTER
 // ============================================================
@@ -227,13 +237,13 @@ function addProject(data){
   return saveProjectMaster(projs);
 }
 
-// Update an existing employee, matched by original name.
-//   data = {originalName, name, email, phone, designation, grossSalary, active}
+// Update an existing employee, matched by original name. Saved to MASTERS first (the single employee sheet); only then is the
+// M_Employee copy row updated, in place (a rename keeps the row). If Masters refuses, nothing changes here.
+//   data = {originalName, name, email, phone, designation, department, grossSalary, dailyRate, holdsFloat, active}
 function updateEmployee(data){
   var orig = _s(data.originalName || data.name);
   if (!orig) return {success:false, message:'Original employee name required.'};
   var emps = getEmployeeMasterData();
-  var found = false;
   // If renaming, guard against collision with a different existing employee.
   var newName = _s(data.name) || orig;
   if (newName.toLowerCase() !== orig.toLowerCase()){
@@ -242,26 +252,39 @@ function updateEmployee(data){
         return {success:false, message:'Another employee already has that name.'};
     }
   }
-  for (var i=0;i<emps.length;i++){
-    if (emps[i].name.toLowerCase() === orig.toLowerCase()){
-      emps[i] = {
-        name: newName,
-        email: data.hasOwnProperty('email') ? _s(data.email) : emps[i].email,
-        phone: data.hasOwnProperty('phone') ? _s(data.phone) : emps[i].phone,
-        designation: data.hasOwnProperty('designation') ? _s(data.designation) : emps[i].designation,
-        grossSalary: data.hasOwnProperty('grossSalary') ? _n(data.grossSalary) : emps[i].grossSalary,
-        active: data.hasOwnProperty('active') ? !!data.active : emps[i].active,
-        holdsFloat: data.hasOwnProperty('holdsFloat') ? !!data.holdsFloat : emps[i].holdsFloat,
-        dailyRate: data.hasOwnProperty('dailyRate') ? _n(data.dailyRate) : (emps[i].dailyRate || 0)
-      };
-      found = true;
-      break;
+  var cur = null;
+  for (var i=0;i<emps.length;i++){ if (emps[i].name.toLowerCase() === orig.toLowerCase()){ cur = emps[i]; break; } }
+  if (!cur) return {success:false, message:'Employee not found.'};
+  var e = {
+    name: newName,
+    email: data.hasOwnProperty('email') ? _s(data.email) : cur.email,
+    phone: data.hasOwnProperty('phone') ? _s(data.phone) : cur.phone,
+    designation: data.hasOwnProperty('designation') ? _s(data.designation) : cur.designation,
+    department: data.hasOwnProperty('department') ? _s(data.department) : (cur.department || ''),
+    grossSalary: data.hasOwnProperty('grossSalary') ? _n(data.grossSalary) : cur.grossSalary,
+    active: data.hasOwnProperty('active') ? !!data.active : cur.active,
+    holdsFloat: data.hasOwnProperty('holdsFloat') ? !!data.holdsFloat : cur.holdsFloat,
+    dailyRate: data.hasOwnProperty('dailyRate') ? _n(data.dailyRate) : (cur.dailyRate || 0)
+  };
+  var pushed = IM_pushEmployeeToMasters_(orig, e);
+  if (!pushed.ok) return {success:false, message:pushed.message};
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(15000); }
+  catch(x){ return {success:true, message:'Saved in Masters. The Finance copy follows within 10 minutes.', name:newName}; }
+  try {
+    var sheet = _getSS().getSheetByName(P.EMPLOYEE);
+    IM_ensureEmployeeColumns_(sheet);
+    var last = sheet.getLastRow();
+    var names = last >= 2 ? sheet.getRange(2,1,last-1,1).getValues() : [];
+    for (var k=0;k<names.length;k++){
+      if (_s(names[k][0]).toLowerCase() === orig.toLowerCase()){
+        sheet.getRange(k+2,1,1,EMC_TOTAL).setValues([[e.name, e.email, e.phone, e.designation, e.grossSalary,
+          e.active ? 'Yes' : 'No', e.holdsFloat ? 'Yes' : 'No', e.dailyRate, e.department]]);
+        break;
+      }
     }
-  }
-  if (!found) return {success:false, message:'Employee not found.'};
-  var res = saveEmployeeMaster(emps);
-  if (res && res.success){ res.message = 'Employee updated.'; res.name = newName; }
-  return res;
+  } finally { lock.releaseLock(); }
+  return {success:true, message:'Employee updated.', name:newName};
 }
 
 // Update an existing project, matched by original code+name (code preferred).

@@ -615,6 +615,7 @@ function IM_syncEmployeesFromMasters_(opts) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) { res.busy = true; return res; }
   try {
+    if (opts.copyUp) { try { Masters.ensureEmployeeLayout(); } catch (x) {} }   // puts the Masters sheet's columns in order (editors only; harmless otherwise)
     var masters = IM_getEmployees() || [];
     IM_ensureEmployeeColumns_(sh);
     var last = sh.getLastRow();

@@ -41,16 +41,6 @@ function _activeFY(filters){
 }
 function _inMonth(filters){ return filters && filters.month && filters.month !== 'all' ? _s(filters.month) : null; }
 
-// All FYs that have a Transactions tab (for the FY picker)
-function _availableFYs(){
-  var out = [];
-  _getSS().getSheets().forEach(function(sh){
-    var n = sh.getName();
-    if (n.indexOf(T.TXN_PREFIX) === 0) out.push(n.substring(T.TXN_PREFIX.length));
-  });
-  if (out.indexOf(_currentFY()) === -1) out.push(_currentFY());
-  return out.sort();
-}
 function _monthInvoice(inv){ try { return _monthOf(inv.invoiceDate); } catch(e){ return ''; } }
 
 // Live Category → Group map, rebuilt per call so renames in M_Category take
@@ -648,29 +638,6 @@ function dashArAgeing(filters){
 // ============================================================
 // PERSONAL — separate personal-spend summary (never in business P&L)
 // ============================================================
-function dashPersonal(filters){
-  try {
-    filters = filters || {};
-    var fy = _activeFY(filters), month = _inMonth(filters);
-    var rows = getPersonalTransactions({fy:fy});
-    var byCat = {}, total = 0, fromCompany = 0;
-    rows.forEach(function(r){
-      if (month && r.month !== month) return;
-      // Tier 5.2 mirror rows (Fund In / Fund Out / Internal) share the sheet
-      // now — only Expense rows should count toward personal-spend totals.
-      // Legacy rows (pre-Tier-5.1) have txnClass filled via the read adapter.
-      if (r.txnClass && r.txnClass !== 'Expense') return;
-      byCat[r.category] = (byCat[r.category]||0) + r.amount;
-      total += r.amount;
-      if (r.linkedRef) fromCompany += r.amount;   // paid from a company account (auto-drawing)
-    });
-    var categories = Object.keys(byCat).map(function(k){ return {category:k, amount:_round(byCat[k])}; })
-      .sort(function(a,b){return b.amount-a.amount;});
-    return _envOk({ fy:fy, month: month||'all', total:_round(total),
-                    fromCompanyAccounts:_round(fromCompany), categories:categories });
-  } catch(e){ return _envErr(e); }
-}
-
 // ============================================================
 // 8b. RICHER DASHBOARD AGGREGATORS
 //     All read getAllTransactions and respect {fy}. Transfers are
@@ -805,119 +772,6 @@ function dashByCategory(filters){
       return {category:k, amount:_round(map[k].amount), group:map[k].group};
     }).sort(function(a,b){ return b.amount-a.amount; });
     return _envOk({ fy:fy, categories:categories });
-  } catch(e){ return _envErr(e); }
-}
-
-// Project-wise spend + revenue.
-//   Returns { projects:[{project, spend, revenue, net}] } sorted by spend desc
-function dashByProject(filters){
-  try {
-    filters = filters || {};
-    var fy = _activeFY(filters);
-    var ss = _getSS();
-    var bucket = function(k){
-      k = k || '(no project)';
-      if (!map[k]) map[k] = {project:k, spend:0, revenue:0};
-      return map[k];
-    };
-    var map = {};
-
-    // Transactions (expense + income)
-    getAllTransactions({fy:fy}).forEach(function(r){
-      var b = bucket(r.project);
-      if (r.txnClass === 'Expense') b.spend += r.amount;
-      else if (r.txnClass === 'Income') b.revenue += r.amount;
-    });
-
-    // Bills — spend by bill's project
-    var billsSheet = ss.getSheetByName(AP.BILLS);
-    if (billsSheet && billsSheet.getLastRow() > 1){
-      var bW = Math.min(billsSheet.getLastColumn(), BC_TOTAL);
-      billsSheet.getRange(2,1,billsSheet.getLastRow()-1,bW).getValues().forEach(function(r){
-        if (_s(r[BC.STATUS]) === BILL_STATUS.CANCELLED) return;
-        if (_s(r[BC.FY]) !== fy) return;
-        var proj = bW > BC.PROJECT ? _s(r[BC.PROJECT]) : '';
-        bucket(proj).spend += _n(r[BC.TAXABLE]) || _n(r[BC.AMOUNT]);
-      });
-    }
-
-    // Un-billed bill payments (no Applied_Bills) — real spend
-    var bpSheet = ss.getSheetByName(AP.PAYMENTS);
-    if (bpSheet && bpSheet.getLastRow() > 1){
-      var bpW = Math.min(bpSheet.getLastColumn(), BPMC_TOTAL);
-      bpSheet.getRange(2,1,bpSheet.getLastRow()-1,bpW).getValues().forEach(function(r){
-        if (bpW > BPMC.CANCELLED_ON && _s(r[BPMC.CANCELLED_ON])) return;
-        if (_s(r[BPMC.APPLIED])) return;
-        if (_s(r[BPMC.FY]) !== fy) return;
-        var proj = bpW > BPMC.PROJECT ? _s(r[BPMC.PROJECT]) : '';
-        bucket(proj).spend += _n(r[BPMC.AMOUNT]);
-      });
-    }
-
-    // Invoices — revenue by invoice's project
-    var invSheet = ss.getSheetByName(AR.INVOICES);
-    if (invSheet && invSheet.getLastRow() > 1){
-      var iW = Math.min(invSheet.getLastColumn(), IC_TOTAL);
-      invSheet.getRange(2,1,invSheet.getLastRow()-1,iW).getValues().forEach(function(r){
-        if (_s(r[IC.STATUS]) === INV_STATUS.CANCELLED) return;
-        if (_s(r[IC.FY]) !== fy) return;
-        var proj = iW > IC.PROJECT ? _s(r[IC.PROJECT]) : '';
-        var val = _n(r[IC.TAXABLE]) || _n(r[IC.AMOUNT]);
-        bucket(proj).revenue += val;
-      });
-    }
-
-    // Returns — reduce revenue on the linked invoice's project
-    var retSheet = ss.getSheetByName(AR.RETURNS);
-    if (retSheet && retSheet.getLastRow() > 1 && invSheet){
-      // Build Invoice_No → project map once
-      var iW2 = Math.min(invSheet.getLastColumn(), IC_TOTAL);
-      var invProjByNo = {};
-      invSheet.getRange(2,1,invSheet.getLastRow()-1,iW2).getValues().forEach(function(r){
-        var no = _s(r[IC.NO]);
-        if (no) invProjByNo[no] = iW2 > IC.PROJECT ? _s(r[IC.PROJECT]) : '';
-      });
-      var rW = Math.min(retSheet.getLastColumn(), RC_TOTAL);
-      retSheet.getRange(2,1,retSheet.getLastRow()-1,rW).getValues().forEach(function(r){
-        if (_s(r[RC.FY]) !== fy) return;
-        var proj = invProjByNo[_s(r[RC.INV_NO])] || '';
-        bucket(proj).revenue -= _n(r[RC.AMOUNT]);
-      });
-    }
-
-    var projects = Object.keys(map).map(function(k){
-      var o = map[k]; o.net = _round(o.revenue - o.spend);
-      o.spend = _round(o.spend); o.revenue = _round(o.revenue);
-      return o;
-    }).filter(function(o){ return o.spend !== 0 || o.revenue !== 0; })
-      .sort(function(a,b){ return b.spend - a.spend; });
-    return _envOk({ fy:fy, projects:projects });
-  } catch(e){ return _envErr(e); }
-}
-
-// Employee-wise expense (who submitted / on whose behalf).
-//   Returns { employees:[{employee, amount, count}] } sorted desc
-function dashByEmployee(filters){
-  try {
-    filters = filters || {};
-    var fy = _activeFY(filters);
-    var all = getAllTransactions({fy:fy});
-    var map = {};
-    all.forEach(function(r){
-      if (r.txnClass !== 'Expense') return;
-      // Prefer "on behalf of" if set, else who submitted
-      var k = r.onBehalfOf || r.submittedBy || '(unknown)';
-      if (k === 'Owner' || k === 'Company') return;   // skip owner/company-level rows
-      if (!map[k]) map[k] = {employee:k, total:0, settled:0, pending:0, count:0};
-      map[k].total += r.amount; map[k].count += 1;
-      if (r.settleStatus === 'Settled')      map[k].settled += r.amount;
-      else if (r.settleStatus === 'Pending') map[k].pending += r.amount;
-    });
-    var employees = Object.keys(map).map(function(k){
-      return {employee:k, total:_round(map[k].total), settled:_round(map[k].settled),
-              pending:_round(map[k].pending), count:map[k].count};
-    }).sort(function(a,b){ return b.total - a.total; });
-    return _envOk({ fy:fy, employees:employees });
   } catch(e){ return _envErr(e); }
 }
 

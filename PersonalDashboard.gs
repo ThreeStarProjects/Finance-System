@@ -127,16 +127,6 @@ function personalMonthly(filters){
   } catch(e){ return _envErr(e); }
 }
 
-// ── Category donut (alias-ish — same shape as personalPnl but capped to top N)
-function personalByCategory(filters){
-  try {
-    var pnl = personalPnl(filters);
-    if (!pnl.ok) return pnl;
-    var groups = pnl.data.groups.slice(0, 10);
-    return _envOk({ groups: groups, total: pnl.data.total });
-  } catch(e){ return _envErr(e); }
-}
-
 // ── Top merchants
 // Uses Party_Name (Tier 5.1 field). Falls back to the first token of Description
 // so pre-migration rows without a party still bucket somewhere.

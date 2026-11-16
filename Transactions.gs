@@ -1192,47 +1192,6 @@ function bulkSettleEmployeePending(employeeName, paymentMode){
   finally { try { lock.releaseLock(); } catch(e){} }
 }
 
-// Owner funds position — net of all Fund In / Fund Out across FYs (or one FY).
-//   Returns { ok, data: { net, totalIn, totalOut, byOwner:[{owner, net}] } }
-function getOwnerFundsPosition(filters){
-  filters = filters || {};
-  try {
-    var sheet = _getFundTransfersSheet();
-    if (!_hasData(sheet)) return _envOk({net:0, totalIn:0, totalOut:0, byOwner:[]});
-
-    var data = sheet.getRange(2, 1, sheet.getLastRow()-1, FT_TOTAL).getValues();
-    var totalIn = 0, totalOut = 0, owners = {};
-
-    data.forEach(function(r){
-      var fy = r[FT.FY];
-      if (filters.fy && filters.fy !== 'all' && fy !== filters.fy) return;
-      if (_s(r[FT.DELETED]) === 'Yes') return;
-
-      var dir = _s(r[FT.DIRECTION]);
-      var amt = parseFloat(r[FT.AMOUNT])||0;
-      var onBehalfOf = _s(r[FT.ON_BEHALF_OF]) || 'Owner';
-
-      if (dir === 'IN'){
-        totalIn += amt;
-        owners[onBehalfOf] = (owners[onBehalfOf]||0) + amt;
-      } else if (dir === 'OUT'){
-        totalOut += amt;
-        owners[onBehalfOf] = (owners[onBehalfOf]||0) - amt;
-      }
-    });
-
-    var byOwner = Object.keys(owners).map(function(k){ return {owner:k, net:_round(owners[k])}; })
-                   .filter(function(o){ return o.net !== 0; })
-                   .sort(function(a,b){ return b.net - a.net; });
-    return _envOk({
-      net: _round(totalIn - totalOut),
-      totalIn: _round(totalIn),
-      totalOut: _round(totalOut),
-      byOwner: byOwner
-    });
-  } catch(e){ return _envErr(e); }
-}
-
 // Migrate existing Transfer rows from Transactions to Fund_Transfers (one-time task).
 //   Reads all CLASS='Transfer' rows across all FY sheets, copies to Fund_Transfers, marks originals deleted.
 //   Returns {moved: count}

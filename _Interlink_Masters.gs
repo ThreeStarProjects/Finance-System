@@ -25,8 +25,6 @@ var IM_CACHE_KEY  = 'IM_v' + IM_VERSION + '_';
 // -----------------------------------------------------------------------------
 // Reads (cached)
 // -----------------------------------------------------------------------------
-function IM_getProjects()  { return IM_cache_('projects',  function () { return Masters.getProjects(); }); }
-function IM_getCustomers() { return IM_cache_('customers', function () { return Masters.getCustomers(); }); }
 /**
  * Employees are read by every payroll / form call, so keep a 6-hour fallback copy: if Masters cannot be read right now, the last
  * good list is used (payroll never stops because of a short outage). Throws only if there is no copy at all.
@@ -45,8 +43,6 @@ function IM_getEmployees() {
     throw e;
   }
 }
-function IM_getSites()     { return IM_cache_('sites',     function () { return Masters.getSites(); }); }
-
 /**
  * Parties with role flags. Call with a flag object to narrow:
  *   IM_getParties({ isSupplier:  true })  → suppliers only
@@ -58,30 +54,9 @@ function IM_getParties(filter) {
   return IM_cache_(key, function () { return Masters.getParties(filter || {}); });
 }
 
-/** Freeform name → Masters record. For migration-time resolution. */
-function IM_resolveName(entity, text) {
-  return Masters.resolveFreeformName(entity, text);
-}
-
 // -----------------------------------------------------------------------------
 // Dropdown-friendly label lists — "{ID} — {Name}"
 // -----------------------------------------------------------------------------
-function IM_projectLabels()  { return IM_asLabels_(IM_getProjects(),  'Project_ID',  'Name'); }
-function IM_customerLabels() { return IM_asLabels_(IM_getCustomers(), 'Customer_ID', 'Name'); }
-function IM_partyLabels(f)   { return IM_asLabels_(IM_getParties(f),  'Party_ID',    'Name'); }
-function IM_employeeLabels() { return IM_asLabels_(IM_getEmployees(), 'Emp_ID',      'Name'); }
-function IM_siteLabels()     { return IM_asLabels_(IM_getSites(),     'Site_ID',     'Name'); }
-
-function IM_asLabels_(rows, idCol, nameCol) {
-  return (rows || [])
-    .filter(function (r) { return String(r['Active?'] || 'Yes').toLowerCase() !== 'no'; })
-    .map(function (r) { return r[idCol] + ' — ' + r[nameCol]; });
-}
-
-// Just the IDs (for lookups where you don't want the label)
-function IM_projectIds()  { return IM_getProjects().map(function (r)  { return r.Project_ID;  }); }
-function IM_customerIds() { return IM_getCustomers().map(function (r) { return r.Customer_ID; }); }
-
 // -----------------------------------------------------------------------------
 // Cache plumbing
 // -----------------------------------------------------------------------------

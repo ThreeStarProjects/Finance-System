@@ -372,22 +372,6 @@ function saveSalaryRecord(data){
   finally { try { lock.releaseLock(); } catch(e){} }
 }
 
-function getSalaryRecords(filters){
-  filters = filters || {};
-  var sheet = _getSS().getSheetByName(P.SALARY);
-  if (!sheet || sheet.getLastRow()<2) return [];
-  return sheet.getRange(2,1,sheet.getLastRow()-1,SC_TOTAL).getValues()
-    .filter(function(r){
-      if (!_s(r[SC.ID])) return false;
-      if (filters.month && _s(r[SC.MONTH]) !== _s(filters.month)) return false;
-      if (filters.employee && _s(r[SC.EMP]) !== _s(filters.employee)) return false;
-      if (filters.fy && _s(r[SC.FY]) !== _s(filters.fy)) return false;
-      return true;
-    })
-    .map(function(r){ return {recordId:_s(r[SC.ID]), employee:_s(r[SC.EMP]), month:_s(r[SC.MONTH]),
-      fy:_s(r[SC.FY]), gross:_n(r[SC.GROSS]), net:_n(r[SC.NET]), calculatedOn:_s(r[SC.CALC_ON])}; });
-}
-
 function checkExistingSalaryRecord(empName, month){
   try {
     var sheet = _getSS().getSheetByName(P.SALARY);

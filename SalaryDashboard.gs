@@ -84,13 +84,6 @@ function _monthLabelToDate(label){
   } catch(e){ return new Date(2000,0,1); }
 }
 
-// Helper: Get current month label "Jan-25"
-function _currentMonthLabel(){
-  var d = new Date();
-  var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return months[d.getMonth()] + '-' + String(d.getFullYear()).slice(-2);
-}
-
 // ============================================================
 // 1. SALARY KPIs (for Main Dashboard + Salary Tab Cards)
 // ============================================================
@@ -528,22 +521,6 @@ function getAvailableSalaryMonths(){
 // ============================================================
 // 9. Get employees for import dropdown
 // ============================================================
-function getEmployeesForImport(){
-  try {
-    var names = getEmployeeNames();
-    var master = getEmployeeMasterData();
-    var employees = master.map(function(e){
-      return {
-        name: e.name,
-        grossSalary: e.grossSalary || 0,
-        dailyRate: e.dailyRate || 0,
-        email: e.email || ''
-      };
-    });
-    return _envOk({employees: employees, names: names});
-  } catch(e){ return _envErr(e); }
-}
-
 // ============================================================
 // 10. Delete/Cancel salary record
 // ============================================================

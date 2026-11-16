@@ -102,8 +102,6 @@
     <button class="tab"           data-panel="personal"     onclick="goto('personal'); personalInit();"><i data-lucide="user"></i><span>Personal</span></button>
     <button class="tab"           data-panel="close"        onclick="goto('close')"><i data-lucide="calendar-check"></i><span>Monthly Close</span></button>
     <button class="tab"           data-panel="masters"      onclick="goto('masters')"><i data-lucide="database"></i><span>Masters</span></button>
-    <button class="tab"           data-panel="tools"        onclick="goto('tools')"><i data-lucide="wrench"></i><span>Tools</span></button>
-    <button class="tab"           data-panel="projectcosts" onclick="goto('projectcosts')"><i data-lucide="hard-hat"></i><span>Project Costs</span></button>
   </nav>
 
   <!-- ============================================================
@@ -111,8 +109,12 @@
        ============================================================ -->
   <section class="panel" id="panel-projectcosts">
     <div class="panel__head">
-      <h1 class="panel__title">Project Costs</h1>
-      <p class="panel__sub">Enter project-tagged costs by category. Choose Simple or Material entry.</p>
+      <h1 class="panel__title">Projects</h1>
+      <p class="panel__sub">Add costs: enter project-tagged costs by category. Choose Simple or Material entry.</p>
+    </div>
+    <div class="tabnav">
+      <button class="tabnav__btn" onclick="goto('projects')">Project view</button>
+      <button class="tabnav__btn is-active" onclick="goto('projectcosts')">Add costs</button>
     </div>
 
     <!-- Toggle buttons for Single / Bulk / Man Hours modes -->
@@ -1480,6 +1482,10 @@
         <div class="panel__sub">Pick a project to see its budget, spent, margin, and all underlying rows.</div>
       </div>
     </div>
+    <div class="tabnav">
+      <button class="tabnav__btn is-active" onclick="goto('projects')">Project view</button>
+      <button class="tabnav__btn" onclick="goto('projectcosts')">Add costs</button>
+    </div>
 
     <!-- Picker + FY filter -->
     <div class="card">
@@ -2422,6 +2428,7 @@
       <button class="tabnav__btn"           data-tab="emp"   onclick="showSubTab($('panel-masters'),'emp')">Employees</button>
       <button class="tabnav__btn"           data-tab="proj"  onclick="showSubTab($('panel-masters'),'proj')">Projects</button>
       <button class="tabnav__btn"           data-tab="cfg"   onclick="showSubTab($('panel-masters'),'cfg')">Config</button>
+      <button class="tabnav__btn"           data-tab="tools" onclick="goto('tools')">Tools</button>
     </div>
 
     <!-- Party -->
@@ -2541,9 +2548,17 @@
   <section class="panel" id="panel-tools">
     <div class="panel__head">
       <div>
-        <h1 class="panel__title">Tools</h1>
-        <div class="panel__sub">Bulk operations and data maintenance.</div>
+        <h1 class="panel__title">Masters</h1>
+        <div class="panel__sub">Tools: bulk operations and data maintenance.</div>
       </div>
+    </div>
+    <div class="tabnav">
+      <button class="tabnav__btn" onclick="goto('masters'); showSubTab($('panel-masters'),'party')">Customers &amp; Vendors</button>
+      <button class="tabnav__btn" onclick="goto('masters'); showSubTab($('panel-masters'),'cat')">Categories</button>
+      <button class="tabnav__btn" onclick="goto('masters'); showSubTab($('panel-masters'),'emp')">Employees</button>
+      <button class="tabnav__btn" onclick="goto('masters'); showSubTab($('panel-masters'),'proj')">Projects</button>
+      <button class="tabnav__btn" onclick="goto('masters'); showSubTab($('panel-masters'),'cfg')">Config</button>
+      <button class="tabnav__btn is-active" onclick="goto('tools')">Tools</button>
     </div>
 
     <div class="card">
@@ -2668,7 +2683,7 @@ function refreshMasters(opts){
   opts = opts || {};
   var btn = $('refresh-app');
   if (btn){ btn.disabled = true; btn.textContent = '↻ Refreshing…'; }
-  callServer('getBootstrap', null, function(res){
+  callServer('getBootstrap', opts.silent ? null : [true], function(res){   // the Refresh button skips the 5-minute employee cache
     if (btn){ btn.disabled = false; btn.textContent = '↻ Refresh'; }
     if (!res){ toast('Refresh failed', 'err'); return; }
     CFG = res || {};
@@ -2683,8 +2698,24 @@ function refreshMasters(opts){
     try { mLoadProjs && mLoadProjs(); } catch(e){}
     try { pjInit && pjInit(); } catch(e){}
     try { hpcPopulateProjects(); } catch(e){}
+    try { repaintEmployeeDropdowns(); } catch(e){}
     if (!opts.silent) toast('Refreshed', 'ok');
   });
+}
+
+// Employee dropdowns that are painted once when their tab first opens (Salary, Advances Ledger, Man Hours): repaint them from the
+// fresh list, keeping whatever is selected. Without this a newly added / re-activated employee only appeared after reloading the page.
+function repaintEmployeeDropdowns(){
+  var emps = (CFG.employees || []).slice();
+  var paint = function(id, first, list){
+    var el = $(id); if (!el || !el.options || !el.options.length) return;   // tab not opened yet: it paints itself on first open
+    var keep = el.value;
+    el.innerHTML = '<option value="">' + first + '</option>' + list.map(function(n){ return '<option value="'+esc(n)+'">'+esc(n)+'</option>'; }).join('');
+    if (keep && list.indexOf(keep) >= 0) el.value = keep;
+  };
+  paint('s-emp', 'Select employee…', emps);
+  paint('salAdv-emp', '— All employees (summary) —', emps.slice().sort());
+  if (window.MH_INITED && typeof hpcMhRefreshDropdowns === 'function') hpcMhRefreshDropdowns();
 }
 
 // Initial load
@@ -2808,7 +2839,8 @@ document.addEventListener('click', function(e){
 function goto(key){
   ACTIVE_TAB = key;
   var btns = document.querySelectorAll('#primary-tabs .tab');
-  for (var i=0;i<btns.length;i++) btns[i].classList.toggle('is-active', btns[i].getAttribute('data-panel') === key);
+  var top = ({ projectcosts: 'projects', tools: 'masters' })[key] || key;   // these two screens live under another top tab
+  for (var i=0;i<btns.length;i++) btns[i].classList.toggle('is-active', btns[i].getAttribute('data-panel') === top);
   var panels = document.querySelectorAll('.panel');
   for (var j=0;j<panels.length;j++) panels[j].classList.toggle('is-active', panels[j].id === 'panel-'+key);
   // Lazy load on first open of each tab

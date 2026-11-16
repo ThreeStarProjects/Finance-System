@@ -43,7 +43,8 @@ function getSheetUrl(){
 
 // ── One round-trip config for every form ────────────────────
 // Pulls all the lists a form might need so a page loads with one call.
-function getBootstrap(){
+function getBootstrap(fresh){
+  if (fresh === true) { try { CacheService.getScriptCache().remove(IM_CACHE_KEY + 'employees'); } catch (e) {} }   // Refresh button: read employees from Masters now
   return {
     categories:        getCategories(),                  // [{category, group, direction}]
     employeeCategories:getEmployeeCategories(),          // [{category, group}] — staff short list

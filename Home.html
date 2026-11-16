@@ -3720,7 +3720,7 @@ function deeRender(){
   }
   body.innerHTML = DEE_STATE.rows.map(function(r){
     var action = r.pending > 0
-      ? '<button class="btn btn--xs btn--danger" onclick="deeSettleAll(' + JSON.stringify(r.employee) + ', ' + r.pending + ', ' + r.pendingCount + ')">Settle all</button>'
+      ? '<button class="btn btn--xs btn--danger" onclick="deeSettleAll(' + esc(JSON.stringify(r.employee)) + ', ' + r.pending + ', ' + r.pendingCount + ')">Settle all</button>'
       : '<span class="pill pill--success">Clear</span>';
     return '<tr>' +
       '<td><strong>' + esc(r.employee) + '</strong></td>' +

@@ -144,7 +144,7 @@ function IM_onOpen_() {
     .addItem('IMS material costs: set subcategory…', 'IM_setCostSubcategory')
     .addItem('➕ Add employee',                'IM_addEmployeeDialog')
     .addItem('Refresh employees from Masters', 'IM_syncEmployeesNow')
-    .addItem('Send customers and vendors to Masters',      'IM_syncCustomersNow')
+    .addItem('Send customers to Masters',      'IM_syncCustomersNow')
     .addSeparator()
     .addItem('❓ Start here',                  'IM_showStartHere')
     .addItem('About',                          'IM_about_')
@@ -430,21 +430,18 @@ function IM_sendPartiesToMasters_(type, mastersFn, cacheKey) {
     var res = Masters[mastersFn](list, 20);
     try { if (cacheKey) CacheService.getScriptCache().remove(IM_CACHE_KEY + cacheKey); } catch (e) {}
     return res;
-  } catch (e) { return { blocked: true, error: /Editors only|Admin only|permission|access/i.test(String(e && e.message)) ? 'only Masters editors can send customers and vendors' : String(e && e.message) }; }
+  } catch (e) { return { blocked: true, error: /Editors only|Admin only|permission|access/i.test(String(e && e.message)) ? 'only Masters editors can send customers' : String(e && e.message) }; }
 }
 function IM_syncCustomersToMasters_() { return IM_sendPartiesToMasters_('Customer', 'syncCustomersFromFinance', 'customers'); }
-function IM_syncVendorsToMasters_()   { return IM_sendPartiesToMasters_('Vendor',   'syncVendorsFromFinance',   'parties_{"isSupplier":true}'); }
 
-/** Menu: send the Finance customers and vendors to Masters now (repeats itself until done). */
+/** Menu: send the Finance customers to Masters now (repeats itself until done). Vendors stay in Finance only. */
 function IM_syncCustomersNow() {
-  var one = function (fn) { var r = fn(), n = 0; while (r && !r.blocked && r.more && n++ < 6) r = fn(); return r; };
-  var c = one(IM_syncCustomersToMasters_), v = c.blocked ? c : one(IM_syncVendorsToMasters_);
-  var part = function (what, r) {
-    return 'Masters has a copy of ' + r.total + ' Finance ' + what + (r.linked ? ' · ' + r.linked + ' linked' : '') + (r.created ? ' · ' + r.created + ' added' : '') +
+  var r = IM_syncCustomersToMasters_(), n = 0;
+  while (r && !r.blocked && r.more && n++ < 6) r = IM_syncCustomersToMasters_();
+  var msg = r.blocked ? 'Customers NOT sent to Masters: ' + r.error
+    : 'Masters has a copy of ' + r.total + ' Finance customer(s)' + (r.linked ? ' · ' + r.linked + ' linked' : '') + (r.created ? ' · ' + r.created + ' added' : '') +
       (r.updated ? ' · ' + r.updated + ' updated' : '') + (r.more ? ' · more will follow in 10 minutes' : '') +
       (r.mastersOnly && r.mastersOnly.length ? ' · only in Masters (not in Finance): ' + r.mastersOnly.slice(0, 4).join(', ') + (r.mastersOnly.length > 4 ? ', …' : '') : '');
-  };
-  var msg = c.blocked ? 'Customers and vendors NOT sent to Masters: ' + c.error : v.blocked ? part('customer(s)', c) + ' · vendors NOT sent: ' + v.error : part('customer(s)', c) + ' | ' + part('vendor(s)', v);
   SpreadsheetApp.getActive().toast(msg, '🔗 Interlink', 10);
 }
 
@@ -456,7 +453,6 @@ function IM_runImport_(quiet) {
   var res, proj = { added: 0, deactivated: 0, warnings: [] };
   try { IM_retireEmployeeSheet_({ copyUp: true }); } catch (e) { Logger.log('Employee move to Masters failed: ' + e.message); }   // the 10-minute job also finishes moving pay terms into Masters
   try { IM_syncCustomersToMasters_(); } catch (e) { Logger.log('Customer copy to Masters failed: ' + e.message); }   // Masters keeps a copy of Finance's customers
-  try { IM_syncVendorsToMasters_(); } catch (e) { Logger.log('Vendor copy to Masters failed: ' + e.message); }       // ... and of its vendors
   try { proj = IM_syncFinanceProjects_(); }                    // first: the PM projects must be Finance projects even if IMS is unreachable
   catch (e) { proj.warnings.push('Project list not synced: ' + e.message); }
   try { res = IM_importImsCosts(); }

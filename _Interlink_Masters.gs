@@ -137,14 +137,13 @@ function IM_installInterlinkMenu() {
 }
 
 function IM_onOpen_() {
-  var ui = SpreadsheetApp.getUi();
-  ui.createMenu('🔗 Interlink')
-    .addItem('Add PM projects to Finance project list', 'IM_syncFinanceProjectsNow')
+  var ui = SpreadsheetApp.getUi(), menu = ui.createMenu('🔗 Interlink');
+  menu.addItem('Add PM projects to Finance project list', 'IM_syncFinanceProjectsNow')
     .addItem('IMS material costs: import now', 'IM_importImsCostsNow')
     .addItem('IMS material costs: set subcategory…', 'IM_setCostSubcategory')
-    .addItem('➕ Add employee',                'IM_addEmployeeDialog')
-    .addItem('Refresh employees from Masters', 'IM_syncEmployeesNow')
-    .addItem('Send customers to Masters',      'IM_syncCustomersNow')
+    .addItem('➕ Add employee',                'IM_addEmployeeDialog');
+  try { if (SpreadsheetApp.getActive().getSheetByName('M_Employee')) menu.addItem('Refresh employees from Masters', 'IM_syncEmployeesNow'); } catch (e) {}   // only while the old employee sheet still exists
+  menu.addItem('Send customers to Masters',      'IM_syncCustomersNow')
     .addSeparator()
     .addItem('❓ Start here',                  'IM_showStartHere')
     .addItem('About',                          'IM_about_')

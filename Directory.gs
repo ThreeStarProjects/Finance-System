@@ -177,7 +177,7 @@ function _buildVendorDirectory(){
       // reflect a payment we've since deleted.
       if (w > BPMC.CANCELLED_ON && _s(r[BPMC.CANCELLED_ON])) return;
       var s = slot(id);
-      s.last = _maxDate(s.last, _asDate(r[BPMC.DATE]));
+      if (_bpDate(r)) s.last = _maxDate(s.last, _bpDate(r));   // a payment with no date at all does not count as "today"
     });
   }
 

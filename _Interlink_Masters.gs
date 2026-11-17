@@ -123,6 +123,10 @@ function IM_onOpen_() {
     .addItem('❓ Start here',                  'IM_showStartHere')
     .addItem('About',                          'IM_about_')
     .addToUi();
+  try {   // payments with no date (typed / pasted into the sheet): given the day they were entered, and their FY fixed, so the dashboard counts them
+    var pd = repairPaymentDates_();
+    if (pd.filled) SpreadsheetApp.getActive().toast(pd.filled + ' vendor payment(s) had no date: set to the day they were entered (see the Notes column). Change the date in Payments Made if the real date differs.', '🔗 Interlink', 15);
+  } catch (e) {}
   try { Masters.registerSystemSheet('finance', SpreadsheetApp.getActive().getId()); } catch (e) {}  // lets PM's project delete find this sheet
   try { IM_retireEmployeeSheet_({ copyUp: false }); } catch (e) {}  // the old M_Employee sheet is removed as soon as everything in it is safely in Masters
   try { _getManHourSheet(); } catch (e) {}  // the Man_Hour_Costs sheet exists from the first open (project delete looks for it)
@@ -424,6 +428,7 @@ function IM_importImsCostsTrigger() { IM_runImport_(true); }
 function IM_importImsCostsNow() { IM_runImport_(false); }
 
 function IM_runImport_(quiet) {
+  try { repairPaymentDates_(); } catch (e) { Logger.log('Payment date repair failed: ' + e.message); }   // dateless vendor payments get a date + FY so the dashboard counts them
   var res, proj = { added: 0, deactivated: 0, warnings: [] };
   try { IM_retireEmployeeSheet_({ copyUp: true }); } catch (e) { Logger.log('Employee move to Masters failed: ' + e.message); }   // the 10-minute job also finishes moving pay terms into Masters
   try { IM_syncCustomersToMasters_(); } catch (e) { Logger.log('Customer copy to Masters failed: ' + e.message); }   // Masters keeps a copy of Finance's customers

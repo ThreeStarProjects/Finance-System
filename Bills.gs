@@ -56,6 +56,51 @@ var BPM_HEADERS = ['Payment_ID','Vendor_ID','Vendor_Name','Payment_Date','FY','A
   'Project'];
 var BPM_WIDTHS = [110,110,220,110,90,120,140,160,180,260,300,160,110,120, 160,200,300,160,200, 180];
 
+// ── Payment date helpers (vendor payments) ─────────────────────────────────────
+// A payment row can reach the sheet WITHOUT a Payment_Date (typed or pasted straight into the sheet, an import, a cleared cell). The
+// ledger lists every row, but the dashboard picks payments by FY / month, and a blank date used to fall out of both (the FY column was
+// blank too) or, worse, count as "today". So everything that reports on payments uses these three: the payment's own date, else the day
+// it was entered (Created_Date); the FY always comes from that date (the stored FY column is only the last resort).
+function _validDate(v){
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (v === null || v === undefined || v === '') return null;
+  var d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+function _bpDate(r){ return _validDate(r[BPMC.DATE]) || _validDate(r[BPMC.CREATED]); }
+function _bpFy(r){ var d = _bpDate(r); return d ? _fyFromDate(d) : _s(r[BPMC.FY]); }
+function _bpMonth(r){ var d = _bpDate(r); return d ? _monthOf(d) : ''; }
+
+// Fills a blank Payment_Date with the day the payment was entered (a note is added to the row) and makes the FY column agree with the
+// date. Quiet; safe to run any time (it only touches rows that are blank or wrong). Returns { filled, fyFixed }.
+function repairPaymentDates_(){
+  var out = { filled: 0, fyFixed: 0 };
+  var lock = LockService.getScriptLock();
+  try { if (!lock.tryLock(10000)) return out; } catch(e){ return out; }
+  try {
+    var sh = _getSS().getSheetByName(AP.PAYMENTS);
+    if (!sh || sh.getLastRow() < 2) return out;
+    var w = Math.min(sh.getLastColumn(), BPMC_TOTAL), n = sh.getLastRow() - 1;
+    var vals = sh.getRange(2, 1, n, w).getValues(), dates = [], fys = [], notes = [], touchD = false, touchF = false;
+    vals.forEach(function(r){
+      var d = _validDate(r[BPMC.DATE]), fy = _s(r[BPMC.FY]), note = _s(r[BPMC.NOTES]), dOut = r[BPMC.DATE];
+      if (_s(r[BPMC.ID]) && !d && _validDate(r[BPMC.CREATED])){
+        d = _validDate(r[BPMC.CREATED]); dOut = d; touchD = true; out.filled++;
+        note = (note ? note + ' ' : '') + '[Payment date was blank: set to the day it was entered]';
+      }
+      if (_s(r[BPMC.ID]) && d){
+        var want = _fyFromDate(d);
+        if (fy !== want){ fy = want; touchF = true; out.fyFixed++; }
+      }
+      dates.push([dOut]); fys.push([fy]); notes.push([note]);
+    });
+    if (touchD){ sh.getRange(2, BPMC.DATE + 1, n, 1).setValues(dates); if (w > BPMC.NOTES) sh.getRange(2, BPMC.NOTES + 1, n, 1).setValues(notes); }
+    if (touchF) sh.getRange(2, BPMC.FY + 1, n, 1).setValues(fys);
+  } finally { try { lock.releaseLock(); } catch(e){} }
+  return out;
+}
+// ── end payment date helpers ──
+
 // ── Bill_Allocations (Option B) ─────────────────────────────────
 // Carves a single bill across projects. One row per {bill, project} line.
 // Sum of a bill's allocations should equal the bill's AMOUNT (gross incl GST);
@@ -618,7 +663,7 @@ function _autoConsumeAdvancesForNewBill(billId, vendorId, billRowIdx){
           rowIdx:   i + 2,
           applied:  applied,
           unapplied: unapplied,
-          date:     _asDate(r[BPMC.DATE]).getTime()
+          date:     (_bpDate(r) || new Date(0)).getTime()
         });
       }
     }
@@ -776,7 +821,7 @@ function getVendorLedger(vendorId){
         }
         var payAmt = _n(p[j][BPMC.AMOUNT]);
         entries.push({
-          date: _safeDateStr(p[j][BPMC.DATE]),
+          date: _safeDateStr(_bpDate(p[j])),
           type: 'Payment',
           ref: _s(p[j][BPMC.ID]),
           credit: 0,
@@ -784,7 +829,7 @@ function getVendorLedger(vendorId){
           project: pW > BPMC.PROJECT ? _s(p[j][BPMC.PROJECT]) : '',
           applied: _enrichAppliedWithVendorBillNo(rawApplied, billLookup),
           unapplied: _round(payAmt - sumApplied),
-          sortKey: _asDate(p[j][BPMC.DATE]).getTime()
+          sortKey: (_bpDate(p[j]) || new Date(0)).getTime()
         });
       }
     }
@@ -1090,8 +1135,11 @@ function updateBillPayment(paymentId, patches){
     if (cancelled) return {success:false, message:'Cannot edit a cancelled payment. Delete then re-record.'};
 
     // Whitelist writes
-    if (patches.hasOwnProperty('paymentDate') && patches.paymentDate)
-      sheet.getRange(rowNum, BPMC.DATE+1).setValue(_asDate(patches.paymentDate));
+    if (patches.hasOwnProperty('paymentDate') && patches.paymentDate){
+      var newPayDate = _asDate(patches.paymentDate);
+      sheet.getRange(rowNum, BPMC.DATE+1).setValue(newPayDate);
+      sheet.getRange(rowNum, BPMC.FY+1).setValue(_fyFromDate(newPayDate));   // the FY column must follow the date (the dashboard and lists filter on it)
+    }
     if (patches.hasOwnProperty('paymentMode'))
       sheet.getRange(rowNum, BPMC.MODE+1).setValue(_s(patches.paymentMode));
     if (patches.hasOwnProperty('reference'))
@@ -1491,7 +1539,7 @@ function listBillPayments(filters){
       var cancelledOn = w > BPMC.CANCELLED_ON ? _s(r[BPMC.CANCELLED_ON]) : '';
       if (cancelledOn && !incCancel) continue;
       if (wantVendor && _s(r[BPMC.VEND_ID]) !== wantVendor) continue;
-      if (wantFy && _s(r[BPMC.FY]) !== wantFy) continue;
+      if (wantFy && _bpFy(r) !== wantFy) continue;
       var blob = (id + ' ' + _s(r[BPMC.VEND_NAME]) + ' ' + _s(r[BPMC.REF]) + ' ' +
                   _s(r[BPMC.APPLIED]) + ' ' + _s(r[BPMC.NOTES])).toLowerCase();
       if (q && blob.indexOf(q) === -1) continue;
@@ -1499,8 +1547,8 @@ function listBillPayments(filters){
         id: id,
         vendorId: _s(r[BPMC.VEND_ID]),
         vendor: _s(r[BPMC.VEND_NAME]),
-        date: _safeDateStr(r[BPMC.DATE]),
-        fy: _s(r[BPMC.FY]),
+        date: _safeDateStr(_bpDate(r)),
+        fy: _bpFy(r),
         amount: _n(r[BPMC.AMOUNT]),
         mode: _s(r[BPMC.MODE]),
         reference: _s(r[BPMC.REF]),

@@ -238,7 +238,7 @@ function deepTally(fy){
       bpOut.rows = bprows.length;
       bprows.forEach(function(r){
         if (!_s(r[BPMC.ID])) return;
-        var rawFy = _s(r[BPMC.FY]) || '(blank)';
+        var rawFy = _bpFy(r) || '(blank)';
         var cancelled = bpw > BPMC.CANCELLED_ON && _s(r[BPMC.CANCELLED_ON]);
         var applied = _s(r[BPMC.APPLIED]);
         var amt = _n(r[BPMC.AMOUNT]);
@@ -378,8 +378,8 @@ function dashKpis(filters){
       var bpKW = Math.min(bpKpi.getLastColumn(), BPMC_TOTAL);
       bpKpi.getRange(2,1,bpKpi.getLastRow()-1,bpKW).getValues().forEach(function(r){
         if (bpKW > BPMC.CANCELLED_ON && _s(r[BPMC.CANCELLED_ON])) return;
-        if (_s(r[BPMC.FY]) !== fy) return;
-        if (month && _monthOf(r[BPMC.DATE]) !== month) return;
+        if (_bpFy(r) !== fy) return;
+        if (month && _bpMonth(r) !== month) return;
         billsPaidCash += _n(r[BPMC.AMOUNT]);
       });
     }
@@ -392,8 +392,8 @@ function dashKpis(filters){
       bp2.getRange(2,1,bp2.getLastRow()-1,bpW2).getValues().forEach(function(r){
         if (bpW2 > BPMC.CANCELLED_ON && _s(r[BPMC.CANCELLED_ON])) return;
         if (_s(r[BPMC.APPLIED])) return;
-        if (_s(r[BPMC.FY]) !== fy) return;
-        if (month && _monthOf(r[BPMC.DATE]) !== month) return;
+        if (_bpFy(r) !== fy) return;
+        if (month && _bpMonth(r) !== month) return;
         if (proj && bpW2 > BPMC.PROJECT && _s(r[BPMC.PROJECT]) !== proj) return;
         var amt = _n(r[BPMC.AMOUNT]);
         expense += amt;
@@ -540,8 +540,8 @@ function dashPnl(filters){
       pRows.forEach(function(r){
         if (pW > BPMC.CANCELLED_ON && _s(r[BPMC.CANCELLED_ON])) return;
         if (_s(r[BPMC.APPLIED])) return;                 // has bill link → covered by Bills scan
-        if (_s(r[BPMC.FY]) !== fy) return;
-        if (month && _monthOf(r[BPMC.DATE]) !== month) return;
+        if (_bpFy(r) !== fy) return;
+        if (month && _bpMonth(r) !== month) return;
         if (proj && pW > BPMC.PROJECT && _s(r[BPMC.PROJECT]) !== proj) return;
         unbilledPay += _n(r[BPMC.AMOUNT]);
       });
@@ -761,8 +761,8 @@ function dashByCategory(filters){
       bpSheet.getRange(2,1,bpSheet.getLastRow()-1,pW).getValues().forEach(function(r){
         if (pW > BPMC.CANCELLED_ON && _s(r[BPMC.CANCELLED_ON])) return;
         if (_s(r[BPMC.APPLIED])) return;              // has bill link → already counted in 2
-        if (_s(r[BPMC.FY]) !== fy) return;
-        if (month && _monthOf(r[BPMC.DATE]) !== month) return;
+        if (_bpFy(r) !== fy) return;
+        if (month && _bpMonth(r) !== month) return;
         unbilled += _n(r[BPMC.AMOUNT]) || 0;
       });
     }
@@ -1176,7 +1176,7 @@ function getProjectOverview(projectName){
         billPayments.push({
           id:         id,
           vendor:     _s(r[BPMC.VEND_NAME]),
-          date:       Utilities.formatDate(_asDate(r[BPMC.DATE]),'GMT+5:30','yyyy-MM-dd'),
+          date:       _safeDateStr(_bpDate(r)),
           amount:     _n(r[BPMC.AMOUNT]),
           attributed: _round(attributedBP),
           mode:       _s(r[BPMC.MODE]),
@@ -1507,7 +1507,7 @@ function getAPReconciliation(fy){
       var bpW = Math.min(bpSheet.getLastColumn(), BPMC_TOTAL);
       bpSheet.getRange(2,1,bpSheet.getLastRow()-1,bpW).getValues().forEach(function(r){
         if (bpW > BPMC.CANCELLED_ON && _s(r[BPMC.CANCELLED_ON])) return;
-        if (_s(r[BPMC.FY]) !== fy) return;
+        if (_bpFy(r) !== fy) return;
         var amt = _n(r[BPMC.AMOUNT]) || 0;
         totalPaidCash += amt;
         var applied = _parseAppliedString(_s(r[BPMC.APPLIED]));

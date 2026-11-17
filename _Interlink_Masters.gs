@@ -116,6 +116,7 @@ function IM_onOpen_() {
   menu.addItem('Add PM projects to Finance project list', 'IM_syncFinanceProjectsNow')
     .addItem('IMS material costs: import now', 'IM_importImsCostsNow')
     .addItem('IMS material costs: set subcategory…', 'IM_setCostSubcategory')
+    .addItem('Check bill balances', 'IM_checkBillBalances')
     .addItem('➕ Add employee',                'IM_addEmployeeDialog');
   try { if (SpreadsheetApp.getActive().getSheetByName('M_Employee')) menu.addItem('Refresh employees from Masters', 'IM_syncEmployeesNow'); } catch (e) {}   // only while the old employee sheet still exists
   menu.addItem('Send customers to Masters',      'IM_syncCustomersNow')
@@ -127,6 +128,10 @@ function IM_onOpen_() {
     var pd = repairPaymentDates_();
     if (pd.undated.length) SpreadsheetApp.getActive().toast(pd.undated.length + ' vendor payment(s) in Bill_Payments have NO date and no entry day (' + pd.undated.slice(0, 8).join(', ') + (pd.undated.length > 8 ? ', …' : '') + '). The FY total counts them, the monthly view cannot. Please type the Payment_Date.', '🔗 Interlink', 30);
     if (pd.filled) SpreadsheetApp.getActive().toast(pd.filled + ' vendor payment(s) had no date: set to the day they were entered (see the Notes column). Change the date in Payments Made if the real date differs.', '🔗 Interlink', 15);
+  } catch (e) {}
+  try {   // a bill whose balance disagrees with its payments / credit notes makes the dashboard differ from the vendor ledger
+    var bb = checkBillBalances_(false).rows.length;
+    if (bb) SpreadsheetApp.getActive().toast(bb + ' bill balance(s) do not match their payments and credit notes, so the dashboard and the vendor ledger differ. Open 🔗 Interlink → Check bill balances.', '🔗 Interlink', 30);
   } catch (e) {}
   try { Masters.registerSystemSheet('finance', SpreadsheetApp.getActive().getId()); } catch (e) {}  // lets PM's project delete find this sheet
   try { IM_retireEmployeeSheet_({ copyUp: false }); } catch (e) {}  // the old M_Employee sheet is removed as soon as everything in it is safely in Masters
@@ -701,4 +706,18 @@ function IM_syncEmployeesNow() {
     }
     ss.toast(msg, '🔗 Interlink', 15);
   } catch (e) { ss.toast('Could not read Masters: ' + e.message, '🔗 Interlink', 10); }
+}
+
+/** Menu: 🔗 Interlink → Check bill balances. Lists bills whose balance does not match their payments and credit notes; one click fixes them. */
+function IM_checkBillBalances() {
+  var ui = SpreadsheetApp.getUi(), r = checkBillBalances_(false);
+  if (!r.rows.length) { ui.alert('Bill balances', 'Every bill balance matches its payments and credit notes.', ui.ButtonSet.OK); return; }
+  var fmt = function (n) { return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+  var lines = r.rows.slice(0, 20).map(function (x) { return x.id + ' · ' + x.vendor + ': sheet says ' + fmt(x.stored) + ', payments and credit notes give ' + fmt(x.expected); });
+  var ans = ui.alert(r.rows.length + ' bill balance(s) do not tally',
+    lines.join('\n') + (r.rows.length > 20 ? '\n… and ' + (r.rows.length - 20) + ' more' : '') +
+    '\n\nSet each one to the amount its payments and credit notes give? (The vendor ledger already uses that amount.)', ui.ButtonSet.YES_NO);
+  if (ans !== ui.Button.YES) return;
+  var f = checkBillBalances_(true);
+  ui.alert('Done', f.fixed + ' bill balance(s) corrected. Reload the dashboard to see the new totals.', ui.ButtonSet.OK);
 }

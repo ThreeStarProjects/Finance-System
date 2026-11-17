@@ -102,6 +102,51 @@ function repairPaymentDates_(){
 }
 // ── end payment date helpers ──
 
+// ── Bill balance check ──────────────────────────────────────────────────────────────────────────
+// The dashboard adds up each bill's stored Outstanding; the vendor ledger works from the payments and credit notes themselves. They agree
+// only while Outstanding = Amount − payments applied to the bill − credit notes on it. Anything that changes a payment or credit note
+// outside the app (a row deleted or typed in the sheet, a bill renumbered) breaks that for one bill and the two screens drift apart.
+// This finds those bills; fix=true sets their Outstanding (and Status) to what the payments and credit notes give.
+// Returns { rows:[{id, vendor, stored, expected}], fixed }.
+function checkBillBalances_(fix){
+  var out = { rows: [], fixed: 0 };
+  var lock = null;
+  if (fix){ lock = LockService.getScriptLock(); try { if (!lock.tryLock(15000)) return out; } catch(e){ return out; } }
+  try {
+    var ss = _getSS(), bs = ss.getSheetByName(AP.BILLS);
+    if (!bs || bs.getLastRow() < 2) return out;
+    var bw = Math.min(bs.getLastColumn(), BC_TOTAL), bills = bs.getRange(2, 1, bs.getLastRow() - 1, bw).getValues();
+    var idOf = {};
+    bills.forEach(function(b){ idOf[_s(b[BC.ID])] = _s(b[BC.ID]); });
+    bills.forEach(function(b){ var no = _s(b[BC.BILL_NO]); if (no && !idOf[no]) idOf[no] = _s(b[BC.ID]); });   // a payment may cite the vendor's bill number
+    var paid = {}, ps = ss.getSheetByName(AP.PAYMENTS);
+    if (ps && ps.getLastRow() > 1){
+      var pw = Math.min(ps.getLastColumn(), BPMC_TOTAL);
+      ps.getRange(2, 1, ps.getLastRow() - 1, pw).getValues().forEach(function(r){
+        if (pw > BPMC.CANCELLED_ON && _s(r[BPMC.CANCELLED_ON])) return;
+        _parseAppliedString(_s(r[BPMC.APPLIED])).forEach(function(a){ var id = idOf[a.ref]; if (id) paid[id] = (paid[id] || 0) + a.amount; });
+      });
+    }
+    var cn = (typeof getCreditNotesByBillId === 'function') ? getCreditNotesByBillId('') : {};
+    bills.forEach(function(b, i){
+      if (_s(b[BC.STATUS]) === BILL_STATUS.CANCELLED) return;
+      var id = _s(b[BC.ID]); if (!id) return;
+      var expected = _round(Math.max(0, _n(b[BC.AMOUNT]) - (paid[id] || 0) - (cn[id] || 0)));
+      var stored = _n(b[BC.OUTSTANDING]);
+      if (Math.abs(stored - expected) <= 1) return;
+      out.rows.push({ id: id, vendor: _s(b[BC.VEND_NAME]), stored: stored, expected: expected });
+      if (fix){
+        bs.getRange(i + 2, BC.OUTSTANDING + 1).setValue(expected);
+        bs.getRange(i + 2, BC.STATUS + 1).setValue(expected <= 0.01 ? BILL_STATUS.PAID : ((paid[id] || 0) + (cn[id] || 0) > 0 ? BILL_STATUS.PARTIAL : BILL_STATUS.UNPAID));
+        out.fixed++;
+      }
+    });
+    if (fix) SpreadsheetApp.flush();
+  } finally { if (lock){ try { lock.releaseLock(); } catch(e){} } }
+  return out;
+}
+// ── end bill balance check ──
+
 // ── Bill_Allocations (Option B) ─────────────────────────────────
 // Carves a single bill across projects. One row per {bill, project} line.
 // Sum of a bill's allocations should equal the bill's AMOUNT (gross incl GST);

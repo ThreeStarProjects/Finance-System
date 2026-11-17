@@ -125,6 +125,7 @@ function IM_onOpen_() {
     .addToUi();
   try {   // payments with no date (typed / pasted into the sheet): given the day they were entered, and their FY fixed, so the dashboard counts them
     var pd = repairPaymentDates_();
+    if (pd.undated.length) SpreadsheetApp.getActive().toast(pd.undated.length + ' vendor payment(s) in Bill_Payments have NO date and no entry day (' + pd.undated.slice(0, 8).join(', ') + (pd.undated.length > 8 ? ', …' : '') + '). The FY total counts them, the monthly view cannot. Please type the Payment_Date.', '🔗 Interlink', 30);
     if (pd.filled) SpreadsheetApp.getActive().toast(pd.filled + ' vendor payment(s) had no date: set to the day they were entered (see the Notes column). Change the date in Payments Made if the real date differs.', '🔗 Interlink', 15);
   } catch (e) {}
   try { Masters.registerSystemSheet('finance', SpreadsheetApp.getActive().getId()); } catch (e) {}  // lets PM's project delete find this sheet

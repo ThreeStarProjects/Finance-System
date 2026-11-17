@@ -74,7 +74,7 @@ function _bpMonth(r){ var d = _bpDate(r); return d ? _monthOf(d) : ''; }
 // Fills a blank Payment_Date with the day the payment was entered (a note is added to the row) and makes the FY column agree with the
 // date. Quiet; safe to run any time (it only touches rows that are blank or wrong). Returns { filled, fyFixed }.
 function repairPaymentDates_(){
-  var out = { filled: 0, fyFixed: 0 };
+  var out = { filled: 0, fyFixed: 0, undated: [] };
   var lock = LockService.getScriptLock();
   try { if (!lock.tryLock(10000)) return out; } catch(e){ return out; }
   try {
@@ -88,6 +88,7 @@ function repairPaymentDates_(){
         d = _validDate(r[BPMC.CREATED]); dOut = d; touchD = true; out.filled++;
         note = (note ? note + ' ' : '') + '[Payment date was blank: set to the day it was entered]';
       }
+      if (_s(r[BPMC.ID]) && !d && !_s(r[BPMC.CANCELLED_ON])) out.undated.push(_s(r[BPMC.ID]));   // no date and no entry day: only a person can fill it in
       if (_s(r[BPMC.ID]) && d){
         var want = _fyFromDate(d);
         if (fy !== want){ fy = want; touchF = true; out.fyFixed++; }

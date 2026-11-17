@@ -2438,6 +2438,7 @@ function getProjectRollup(fy){
     // each allocation's amount is credited to its own project. Bills with no
     // allocations fall back to Bill.Project (legacy single-project behavior).
     var allocMap = (typeof _getAllBillAllocationsMap === 'function') ? _getAllBillAllocationsMap() : {};
+    var cnByBillAll = (typeof getCreditNotesByBillId === 'function') ? getCreditNotesByBillId('') : {};
     var billsSheet = _getSS().getSheetByName(AP.BILLS);
     if (billsSheet && billsSheet.getLastRow() > 1){
       var bW = billsSheet.getLastColumn();
@@ -2448,12 +2449,14 @@ function getProjectRollup(fy){
         if (!_billCountsForProject(r)) return;
         var bid    = _s(r[BC.ID]);
         var allocs = allocMap[bid];
+        // net of the credit notes raised against this bill (spread over its projects in the same proportion)
+        var gross  = _n(r[BC.AMOUNT]) || 0, keep = gross > 0 ? Math.max(0, 1 - (_n(cnByBillAll[bid]) || 0) / gross) : 1;
         if (allocs && allocs.length){
-          allocs.forEach(function(a){ _b(a.project).spentBills += a.amount || 0; });
+          allocs.forEach(function(a){ _b(a.project).spentBills += (a.amount || 0) * keep; });
         } else {
           var proj = _s(r[BC.PROJECT]);
           if (!proj) return;
-          _b(proj).spentBills += _n(r[BC.AMOUNT]) || 0;
+          _b(proj).spentBills += gross * keep;
         }
       });
     }

@@ -164,6 +164,8 @@ function _buildVendorDirectory(){
       s.spent += _n(r[BC.AMOUNT]);
       s.last = _maxDate(s.last, _asDate(r[BC.BILL_DATE]));
     });
+    // credit notes (goods sent back) reduce what was really spent with the vendor
+    getCreditNoteEntries_().forEach(function(c){ if (c.vendorId) slot(c.vendorId).spent -= c.amount; });
   }
 
   // ── Aggregate from Bill_Payments (payment dates) ──

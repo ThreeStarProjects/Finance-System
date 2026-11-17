@@ -280,6 +280,7 @@ function deepTally(fy){
         dashboardValues: {
           totalExpense:   d.totalExpenses,
           billsBooked:    d.billsBooked,
+          creditNotesReceived: d.creditNotesReceived,
           billsPaid:      d.billsPaid,
           billsUnpaid:    d.billsUnpaid,
           directExpense:  d.directExpense,
@@ -290,18 +291,18 @@ function deepTally(fy){
           outstandingAR:  d.outstandingAR
         },
         expected: {
-          '(Total Expense) should equal (Bills Booked + Direct + Un-billed vendor)':
-            _round(d.billsBooked + d.directExpense + d.unBilledVendorPay),
-          '(Bills Booked) should equal (Bills Paid + Bills Remaining)':
-            _round(d.billsPaid + d.billsUnpaid),
+          '(Total Expense) should equal (Bills Booked − Credit Notes + Direct + Un-billed vendor)':
+            _round(d.billsBooked - d.creditNotesReceived + d.directExpense + d.unBilledVendorPay),
+          '(Bills Booked) should equal (Bills Paid + Bills Remaining + Credit Notes)':
+            _round(d.billsPaid + d.billsUnpaid + d.creditNotesReceived),
           '(Direct Expense on dashboard) should equal (Transactions Expense active for this FY)':
             _round(directFromTx)
         },
         gaps: {
           totalExpense_vs_sumOfParts:
-            _round(d.totalExpenses - (d.billsBooked + d.directExpense + d.unBilledVendorPay)),
+            _round(d.totalExpenses - (d.billsBooked - d.creditNotesReceived + d.directExpense + d.unBilledVendorPay)),
           billsBooked_vs_paidPlusRemaining:
-            _round(d.billsBooked - (d.billsPaid + d.billsUnpaid)),
+            _round(d.billsBooked - (d.billsPaid + d.billsUnpaid + d.creditNotesReceived)),
           directExpense_vs_txnClassExpense:
             _round(d.directExpense - directFromTx)
         }
@@ -369,6 +370,11 @@ function dashKpis(filters){
         billsUnpaidTotal += _n(r[BC.OUTSTANDING]);  // still due
       });
     }
+    // Vendor credit notes (goods sent back) take cost off, exactly as customer returns take sales off below. Total Expense (and so Net)
+    // is therefore Bills Booked − Credit Notes + Direct + Un-billed. Respects the month / project filters like the bills do.
+    var creditNotes = 0;
+    getCreditNotesForPeriod_(fy, month, proj).forEach(function(c){ creditNotes += c.amount; });
+    expense -= creditNotes;
     // Bills paid = sum of vendor payments in this FY (cash out on bills).
     // Uses BPMC.AMOUNT (gross applied against vendor account). Includes both
     // bill-linked and unlinked advance payments — all real cash out.
@@ -466,8 +472,8 @@ function dashKpis(filters){
       gstOutput:_round(gstOutput), gstInput:_round(gstInput), gstNet:_round(gstOutput - gstInput),
       // Bill-specific breakdown for the split "Booked vs Paid" KPI cards.
       billsBooked:_round(billsBooked), billsPaid:_round(billsPaidCash), billsUnpaid:_round(billsUnpaidTotal),
-      // Credit notes received this FY (vendor returns). Net Billed = billsBooked − creditNotesReceived.
-      creditNotesReceived: (typeof getCreditNotesTotalFy === 'function') ? getCreditNotesTotalFy(fy) : 0,
+      // Credit notes received in this period (vendor returns): already taken off totalExpenses. Net Billed = billsBooked − creditNotesReceived.
+      creditNotesReceived: _round(creditNotes),
       // Total Expense breakdown so operators see where the number comes from:
       // Total Expense (Billed) = billsBooked + directExpense + unBilledVendorPay
       directExpense:_round(directExpense), unBilledVendorPay:_round(unBilledVendorPay)
@@ -528,6 +534,8 @@ function dashPnl(filters){
         _bump(r[BC.CATEGORY], amt);
       });
     }
+    // Credit notes take cost off (ex-GST share, in the category of the bill they were raised against).
+    getCreditNotesForPeriod_(fy, month, proj).forEach(function(c){ _bump(c.category, -c.taxable); });
 
     // Critical #3 — un-billed vendor payments (Applied_Bills empty) hit P&L
     // in a synthetic bucket so the money isn't invisible. Owner should
@@ -694,6 +702,8 @@ function dashMonthly(filters){
         if (map[m]) map[m].expenses += _n(r[BC.AMOUNT]) || 0;
       });
     }
+    // Credit notes take cost off in the month they were issued.
+    getCreditNoteEntries_().forEach(function(c){ if (c.fy === fy && map[c.month]) map[c.month].expenses -= c.amount; });
     getAllTransactions({fy:fy}).forEach(function(r){
       if (!map[r.month]) return;
       if (r.txnClass === 'Income') map[r.month].sales += r.amount || 0;
@@ -752,6 +762,7 @@ function dashByCategory(filters){
         _bump(_s(r[BC.CATEGORY]), amt);
       });
     }
+    getCreditNotesForPeriod_(fy, month, null).forEach(function(c){ _bump(c.category, -c.taxable); });
 
     // 3) Un-billed vendor payments — one synthetic bucket, matches dashPnl.
     var bpSheet = _getSS().getSheetByName(AP.PAYMENTS);

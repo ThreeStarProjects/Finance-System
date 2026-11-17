@@ -381,3 +381,46 @@ function getCreditNotesByBillId(fy){
   } catch(e){ Logger.log('getCreditNotesByBillId: '+e.message); return {}; }
 }
 
+// ── Credit notes for the reports ────────────────────────────────────────────────────────────────
+// Every total that adds up bills (Total Expense, P&L, monthly chart, categories, vendor spend, project spend) must take the credit notes
+// off again, the same way customer returns are taken off sales. One row per active credit note: the bill's category / project and the
+// ex-GST share (the credit note amount is gross) come from the bill it was raised against. A credit note on a cancelled or missing bill
+// is left out, because that bill is already out of the totals. Dated by the credit note's own date (FY + month), like customer returns.
+function getCreditNoteEntries_(){
+  var out = [];
+  try {
+    var ss = _getSS(), sheet = ss.getSheetByName(BR.SHEET);
+    if (!sheet || !_hasData(sheet)) return out;
+    var w = Math.min(sheet.getLastColumn(), BRC_TOTAL);
+    var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, w).getValues();
+    var bills = {}, bs = ss.getSheetByName(AP.BILLS);
+    if (bs && bs.getLastRow() > 1){
+      var bw = Math.min(bs.getLastColumn(), BC_TOTAL);
+      bs.getRange(2, 1, bs.getLastRow() - 1, bw).getValues().forEach(function(b){
+        bills[_s(b[BC.ID])] = { status: _s(b[BC.STATUS]), amount: _n(b[BC.AMOUNT]), taxable: _n(b[BC.TAXABLE]), category: _s(b[BC.CATEGORY]), project: bw > BC.PROJECT ? _s(b[BC.PROJECT]) : '' };
+      });
+    }
+    rows.forEach(function(r){
+      if (!_s(r[BRC.ID])) return;
+      if (w > BRC.DELETED && _s(r[BRC.DELETED]) === 'Yes') return;
+      var b = bills[_s(r[BRC.BILL_ID])];
+      if (!b || b.status === BILL_STATUS.CANCELLED) return;
+      var amt = _n(r[BRC.AMOUNT]); if (amt <= 0) return;
+      var d = _validDate(r[BRC.RET_DATE]);
+      out.push({
+        billId: _s(r[BRC.BILL_ID]), vendorId: _s(r[BRC.VEND_ID]), amount: amt,
+        fy: _s(r[BRC.FY]) || (d ? _fyFromDate(d) : ''), month: d ? _monthOf(d) : '',
+        taxable: (b.amount > 0 && b.taxable > 0) ? amt * b.taxable / b.amount : amt,
+        category: b.category, project: b.project
+      });
+    });
+  } catch(e){ Logger.log('getCreditNoteEntries_: ' + e.message); }
+  return out;
+}
+// The credit notes that belong to one report period (FY, optional month, optional project), same filters as the bills beside them.
+function getCreditNotesForPeriod_(fy, month, proj){
+  return getCreditNoteEntries_().filter(function(c){
+    return c.fy === fy && (!month || c.month === month) && (!proj || c.project === proj);
+  });
+}
+

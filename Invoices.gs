@@ -416,7 +416,7 @@ function getCustomerOpenInvoices(customerId){
       if (outstanding <= 0) continue;
       out.push({
         no: _s(r[IC.NO]),
-        date: Utilities.formatDate(_asDate(r[IC.INV_DATE]),'GMT+5:30','yyyy-MM-dd'),
+        date: _safeDateStr(_invDate(r)),
         total: _n(r[IC.TOTAL]),
         outstanding: outstanding,
         status: status,
@@ -452,7 +452,7 @@ function recordPayment(data){
             _s(inv[i][IC.STATUS]) !== INV_STATUS.CANCELLED &&
             _n(inv[i][IC.OUTSTANDING]) > 0){
           open.push({rowNum:i+2, no:_s(inv[i][IC.NO]), outstanding:_n(inv[i][IC.OUTSTANDING]),
-                     paid:_n(inv[i][IC.PAID]), date:_asDate(inv[i][IC.INV_DATE])});
+                     paid:_n(inv[i][IC.PAID]), date:(_invDate(inv[i]) || new Date(0))});
         }
       }
     }
@@ -602,7 +602,7 @@ function getCustomerLedger(customerId){
               discNote = 'Discount: ' + label + ' ' + dApp + ' (₹' + _round(dAmt) + ')';
             }
           }
-          entries.push({date:_asDate(r[IC.INV_DATE]), type:'Invoice', ref:_s(r[IC.NO]),
+          entries.push({date:(_invDate(r) || new Date(0)), type:'Invoice', ref:_s(r[IC.NO]),
                         debit:_n(r[IC.AMOUNT]), credit:0,
                         project: iW > IC.PROJECT ? _s(r[IC.PROJECT]) : '',
                         applied: '',
@@ -681,8 +681,8 @@ function getInvoices(filters){
   return sheet.getRange(2,1,sheet.getLastRow()-1,w).getValues()
     .map(function(r){ return {
       invoiceNo:_s(r[IC.NO]), orderId:_s(r[IC.ORDER_ID]), customerId:_s(r[IC.CUST_ID]),
-      customerName:_s(r[IC.CUST_NAME]), gstin:_s(r[IC.GSTIN]), invoiceDate:r[IC.INV_DATE],
-      dueDate:r[IC.DUE_DATE], fy:_s(r[IC.FY]), taxable:_n(r[IC.TAXABLE]), gstRate:_s(r[IC.GST_RATE]),
+      customerName:_s(r[IC.CUST_NAME]), gstin:_s(r[IC.GSTIN]), invoiceDate:_invDate(r) || r[IC.INV_DATE],
+      dueDate:_invDue(r) || r[IC.DUE_DATE], fy:_s(r[IC.FY]), taxable:_n(r[IC.TAXABLE]), gstRate:_s(r[IC.GST_RATE]),
       cgst:_n(r[IC.CGST]), sgst:_n(r[IC.SGST]), igst:_n(r[IC.IGST]), amount:_n(r[IC.AMOUNT]),
       outstanding:_n(r[IC.OUTSTANDING]), paid:_n(r[IC.PAID]), status:_s(r[IC.STATUS]),
       discountType:   w > IC.DISC_TYPE    ? _s(r[IC.DISC_TYPE])    : '',
@@ -978,7 +978,7 @@ function listInvoices(filters){
         var hay = (_s(r[IC.CUST_NAME]) + ' ' + _s(r[IC.NO]) + ' ' + _s(r[IC.NOTES])).toLowerCase();
         if (hay.indexOf(q) === -1) continue;
       }
-      var dueDate = _asDate(r[IC.DUE_DATE]);
+      var dueDate = (_invDue(r) || new Date());
       var outstanding = _n(r[IC.OUTSTANDING]);
       var daysOverdue = 0;
       if (outstanding > 0 && dueDate < today){
@@ -988,8 +988,8 @@ function listInvoices(filters){
         no:           _s(r[IC.NO]),
         customerId:   _s(r[IC.CUST_ID]),
         customer:     _s(r[IC.CUST_NAME]),
-        invDate:      _safeDateStr(r[IC.INV_DATE]),
-        dueDate:      _safeDateStr(r[IC.DUE_DATE]),
+        invDate:      _safeDateStr(_invDate(r)),
+        dueDate:      _safeDateStr(_invDue(r)),
         fy:           _s(r[IC.FY]),
         amount:       _n(r[IC.AMOUNT]),
         outstanding:  outstanding,

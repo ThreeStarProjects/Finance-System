@@ -125,9 +125,11 @@ function IM_onOpen_() {
     .addItem('About',                          'IM_about_')
     .addToUi();
   try {   // payments with no date (typed / pasted into the sheet): given the day they were entered, and their FY fixed, so the dashboard counts them
-    var pd = repairPaymentDates_();
-    if (pd.undated.length) SpreadsheetApp.getActive().toast(pd.undated.length + ' vendor payment(s) in Bill_Payments have NO date and no entry day (' + pd.undated.slice(0, 8).join(', ') + (pd.undated.length > 8 ? ', …' : '') + '). The FY total counts them, the monthly view cannot. Please type the Payment_Date.', '🔗 Interlink', 30);
-    if (pd.filled) SpreadsheetApp.getActive().toast(pd.filled + ' vendor payment(s) had no date: set to the day they were entered (see the Notes column). Change the date in Payments Made if the real date differs.', '🔗 Interlink', 15);
+    var dr = repairDates_(), filled = dr.payments.filled + dr.bills.filled + dr.invoices.filled;
+    var missing = [].concat(dr.payments.undated, dr.bills.undated, dr.invoices.undated);
+    if (filled) SpreadsheetApp.getActive().toast(filled + ' record(s) had no date (' + dr.payments.filled + ' vendor payment, ' + dr.bills.filled + ' bill, ' + dr.invoices.filled + ' invoice): set to the day they were entered, see the Notes column. Change the date if the real one differs.', '🔗 Interlink', 20);
+    if (missing.length) SpreadsheetApp.getActive().toast(missing.length + ' record(s) have NO date and no entry day (' + missing.slice(0, 8).join(', ') + (missing.length > 8 ? ', …' : '') + '). They are marked red in the sheet. The year total counts them, the monthly view cannot: please type the date.', '🔗 Interlink', 40);
+    ensureMissingDateHighlight_();
   } catch (e) {}
   try {   // a bill whose balance disagrees with its payments / credit notes makes the dashboard differ from the vendor ledger
     var bb = checkBillBalances_(false).rows.length;
@@ -434,7 +436,7 @@ function IM_importImsCostsTrigger() { IM_runImport_(true); }
 function IM_importImsCostsNow() { IM_runImport_(false); }
 
 function IM_runImport_(quiet) {
-  try { repairPaymentDates_(); } catch (e) { Logger.log('Payment date repair failed: ' + e.message); }   // dateless vendor payments get a date + FY so the dashboard counts them
+  try { repairDates_(); } catch (e) { Logger.log('Date repair failed: ' + e.message); }   // dateless payments / bills / invoices get a date so the dashboard counts them
   var res, proj = { added: 0, deactivated: 0, warnings: [] };
   try { IM_retireEmployeeSheet_({ copyUp: true }); } catch (e) { Logger.log('Employee move to Masters failed: ' + e.message); }   // the 10-minute job also finishes moving pay terms into Masters
   try { IM_syncCustomersToMasters_(); } catch (e) { Logger.log('Customer copy to Masters failed: ' + e.message); }   // Masters keeps a copy of Finance's customers

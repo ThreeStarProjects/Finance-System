@@ -69,7 +69,7 @@ function _buildCustomerDirectory(){
     inv.getRange(2,1,inv.getLastRow()-1,iW).getValues().forEach(function(r){
       if(!_s(r[IC.CUST_ID])) return; var s=slot(_s(r[IC.CUST_ID])); s.name=s.name||_s(r[IC.CUST_NAME]);
       if(_s(r[IC.STATUS])!==INV_STATUS.CANCELLED){ s.invoices++; s.invoiced+=_n(r[IC.AMOUNT]); s.outstanding+=_n(r[IC.OUTSTANDING]); }
-      s.last=_maxDate(s.last,_asDate(r[IC.INV_DATE]));
+      if (_invDate(r)) s.last=_maxDate(s.last,_invDate(r));
     });
   }
 
@@ -162,7 +162,7 @@ function _buildVendorDirectory(){
       if (!id) return;
       var s = slot(id); s.name = s.name || nm;
       s.spent += _n(r[BC.AMOUNT]);
-      s.last = _maxDate(s.last, _asDate(r[BC.BILL_DATE]));
+      if (_billDate(r)) s.last = _maxDate(s.last, _billDate(r));
     });
     // credit notes (goods sent back) reduce what was really spent with the vendor
     getCreditNoteEntries_().forEach(function(c){ if (c.vendorId) slot(c.vendorId).spent -= c.amount; });

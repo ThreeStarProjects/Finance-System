@@ -362,7 +362,7 @@ function dashKpis(filters){
       bs2.getRange(2,1,bs2.getLastRow()-1,bW2).getValues().forEach(function(r){
         if (_s(r[BC.STATUS]) === BILL_STATUS.CANCELLED) return;
         if (_s(r[BC.FY]) !== fy) return;
-        if (month && _monthOf(r[BC.BILL_DATE]) !== month) return;
+        if (month && _billMonth(r) !== month) return;
         if (proj && bW2 > BC.PROJECT && _s(r[BC.PROJECT]) !== proj) return;
         var billGross = _n(r[BC.AMOUNT]);
         expense          += billGross;
@@ -528,7 +528,7 @@ function dashPnl(filters){
       bRows.forEach(function(r){
         if (_s(r[BC.STATUS]) === BILL_STATUS.CANCELLED) return;
         if (_s(r[BC.FY]) !== fy) return;
-        if (month && _monthOf(r[BC.BILL_DATE]) !== month) return;
+        if (month && _billMonth(r) !== month) return;
         if (proj && bW > BC.PROJECT && _s(r[BC.PROJECT]) !== proj) return;
         var amt = _n(r[BC.TAXABLE]) || _n(r[BC.AMOUNT]);
         _bump(r[BC.CATEGORY], amt);
@@ -675,7 +675,7 @@ function dashMonthly(filters){
       invSheet.getRange(2,1,invSheet.getLastRow()-1,iW).getValues().forEach(function(r){
         if (_s(r[IC.STATUS]) === INV_STATUS.CANCELLED) return;
         if (_s(r[IC.FY]) !== fy) return;
-        var m = _monthOf(r[IC.INV_DATE]);
+        var m = _invMonth(r);
         if (map[m]) map[m].sales += _n(r[IC.AMOUNT]) || 0;
       });
     }
@@ -698,7 +698,7 @@ function dashMonthly(filters){
       billsSheet.getRange(2,1,billsSheet.getLastRow()-1,bW).getValues().forEach(function(r){
         if (_s(r[BC.STATUS]) === BILL_STATUS.CANCELLED) return;
         if (_s(r[BC.FY]) !== fy) return;
-        var m = _monthOf(r[BC.BILL_DATE]);
+        var m = _billMonth(r);
         if (map[m]) map[m].expenses += _n(r[BC.AMOUNT]) || 0;
       });
     }
@@ -757,7 +757,7 @@ function dashByCategory(filters){
       billsSheet.getRange(2,1,billsSheet.getLastRow()-1,bW).getValues().forEach(function(r){
         if (_s(r[BC.STATUS]) === BILL_STATUS.CANCELLED) return;
         if (_s(r[BC.FY]) !== fy) return;
-        if (month && _monthOf(r[BC.BILL_DATE]) !== month) return;
+        if (month && _billMonth(r) !== month) return;
         var amt = _n(r[BC.TAXABLE]) || _n(r[BC.AMOUNT]) || 0;
         _bump(_s(r[BC.CATEGORY]), amt);
       });
@@ -1035,7 +1035,7 @@ function getProjectOverview(projectName){
           id:          bid,
           vendor:      _s(r[BC.VEND_NAME]),
           billNo:      bno,
-          billDate:    Utilities.formatDate(_asDate(r[BC.BILL_DATE]),'GMT+5:30','yyyy-MM-dd'),
+          billDate:    _safeDateStr(_billDate(r)),
           amount:      _n(r[BC.AMOUNT]),
           taxable:     billTaxable,
           paid:        _n(r[BC.PAID]),
@@ -1062,7 +1062,7 @@ function getProjectOverview(projectName){
         invoices.push({
           no:          no,
           customer:    _s(r[IC.CUST_NAME]),
-          invDate:     Utilities.formatDate(_asDate(r[IC.INV_DATE]),'GMT+5:30','yyyy-MM-dd'),
+          invDate:     _safeDateStr(_invDate(r)),
           amount:      _n(r[IC.AMOUNT]),
           paid:        _n(r[IC.PAID]),
           outstanding: _n(r[IC.OUTSTANDING]),

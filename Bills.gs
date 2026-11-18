@@ -102,6 +102,72 @@ function repairPaymentDates_(){
 }
 // ── end payment date helpers ──
 
+// ── Bill / invoice date helpers + whole-sheet date repair ────────────────────────────────────────
+// Same idea as the payment date helpers above, for bills and invoices. A row can reach the sheet WITHOUT its date (pasted or typed straight
+// into the sheet, an import, a cleared cell). Everything that reports on bills / invoices uses these: the row's own date, else the day it
+// was entered (Created_Date); a missing Due_Date is the document date (what createBill / createInvoice do themselves). A row with no date
+// at all is never treated as "today" (it used to land in the current month); it stays in its FY and is reported for a person to date.
+function _billDate(r){ return _validDate(r[BC.BILL_DATE]) || _validDate(r[BC.CREATED]); }
+function _billDue(r){ return _validDate(r[BC.DUE_DATE]) || _billDate(r); }
+function _billMonth(r){ var d = _billDate(r); return d ? _monthOf(d) : ''; }
+function _invDate(r){ return _validDate(r[IC.INV_DATE]) || _validDate(r[IC.CREATED]); }
+function _invDue(r){ return _validDate(r[IC.DUE_DATE]) || _invDate(r); }
+function _invMonth(r){ var d = _invDate(r); return d ? _monthOf(d) : ''; }
+
+// Fills blank Bill_Date / Invoice_Date from the day the row was entered, blank Due_Date from the document date, adds a note on the row.
+// kind: { sheet, ID, DATE, DUE, CREATED, NOTES, TOTAL, label }. Returns { filled, due, undated:[ids] }.
+function _repairDocDates_(kind){
+  var out = { filled: 0, due: 0, undated: [] };
+  var sh = _getSS().getSheetByName(kind.sheet);
+  if (!sh || sh.getLastRow() < 2) return out;
+  var w = Math.min(sh.getLastColumn(), kind.TOTAL), n = sh.getLastRow() - 1;
+  var vals = sh.getRange(2, 1, n, w).getValues(), dates = [], dues = [], notes = [], touchD = false, touchU = false;
+  vals.forEach(function(r){
+    var d = _validDate(r[kind.DATE]), dOut = r[kind.DATE], uOut = r[kind.DUE], note = _s(r[kind.NOTES]), id = _s(r[kind.ID]);
+    if (id && !d){
+      var c = _validDate(r[kind.CREATED]);
+      if (c){ d = c; dOut = c; touchD = true; out.filled++; note = (note ? note + ' ' : '') + '[' + kind.label + ' date was blank: set to the day it was entered]'; }
+      else out.undated.push(id);
+    }
+    if (id && d && !_validDate(r[kind.DUE])){ uOut = d; touchU = true; out.due++; }
+    dates.push([dOut]); dues.push([uOut]); notes.push([note]);
+  });
+  if (touchD){ sh.getRange(2, kind.DATE + 1, n, 1).setValues(dates); if (w > kind.NOTES) sh.getRange(2, kind.NOTES + 1, n, 1).setValues(notes); }
+  if (touchU) sh.getRange(2, kind.DUE + 1, n, 1).setValues(dues);
+  return out;
+}
+
+// One call for the whole sheet: vendor payments + bills + invoices. Quiet; safe any time. Returns what was filled and what a person must date.
+function repairDates_(){
+  var res = { payments: { filled: 0, fyFixed: 0, undated: [] }, bills: { filled: 0, due: 0, undated: [] }, invoices: { filled: 0, due: 0, undated: [] } };
+  try { res.payments = repairPaymentDates_(); } catch(e){ Logger.log('repair payments: ' + e.message); }
+  var lock = LockService.getScriptLock();
+  try { if (!lock.tryLock(10000)) return res; } catch(e){ return res; }
+  try {
+    try { res.bills = _repairDocDates_({ sheet: AP.BILLS, ID: BC.ID, DATE: BC.BILL_DATE, DUE: BC.DUE_DATE, CREATED: BC.CREATED, NOTES: BC.NOTES, TOTAL: BC_TOTAL, label: 'Bill' }); } catch(e){ Logger.log('repair bills: ' + e.message); }
+    try { res.invoices = _repairDocDates_({ sheet: AR.INVOICES, ID: IC.NO, DATE: IC.INV_DATE, DUE: IC.DUE_DATE, CREATED: IC.CREATED, NOTES: IC.NOTES, TOTAL: IC_TOTAL, label: 'Invoice' }); } catch(e){ Logger.log('repair invoices: ' + e.message); }
+  } finally { try { lock.releaseLock(); } catch(e){} }
+  return res;
+}
+
+// Marks a missing date in red wherever a row has an ID but no date, so it is visible in the sheet itself. Idempotent (one rule per column).
+function ensureMissingDateHighlight_(){
+  var ss = _getSS();
+  [[AP.BILLS, BC.ID, BC.BILL_DATE], [AP.PAYMENTS, BPMC.ID, BPMC.DATE], [AR.INVOICES, IC.NO, IC.INV_DATE]].forEach(function(t){
+    try {
+      var sh = ss.getSheetByName(t[0]); if (!sh) return;
+      function L(i){ var s = '', n = i + 1; while (n > 0){ var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+      var formula = '=AND($' + L(t[1]) + '2<>"",' + L(t[2]) + '2="")';
+      var rules = sh.getConditionalFormatRules();
+      if (rules.some(function(r){ var c = r.getBooleanCondition(); return c && c.getCriteriaValues && String(c.getCriteriaValues()[0]) === formula; })) return;
+      var rng = sh.getRange(2, t[2] + 1, Math.max(sh.getMaxRows() - 1, 1), 1);
+      rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied(formula).setBackground('#F4C7C3').setRanges([rng]).build());
+      sh.setConditionalFormatRules(rules);
+    } catch(e){ Logger.log('missing-date highlight ' + t[0] + ': ' + e.message); }
+  });
+}
+// ── end bill / invoice date helpers ──
+
 // ── Bill balance check ──────────────────────────────────────────────────────────────────────────
 // The dashboard adds up each bill's stored Outstanding; the vendor ledger works from the payments and credit notes themselves. They agree
 // only while Outstanding = Amount − payments applied to the bill − credit notes on it. Anything that changes a payment or credit note
@@ -419,7 +485,7 @@ function getVendorOpenBills(vendorId){
       out.push({
         id: _s(r[BC.ID]),                       // added for credit-note picker
         no: _s(r[BC.BILL_NO]),
-        date: Utilities.formatDate(_asDate(r[BC.BILL_DATE]),'GMT+5:30','yyyy-MM-dd'),
+        date: _safeDateStr(_billDate(r)),
         total: _n(r[BC.TOTAL]),
         outstanding: outstanding,
         status: status,
@@ -468,8 +534,8 @@ function recordBillPayment(data){
       // Sort by bill_date ascending (oldest first) — base order for both FIFO
       // and single-target.
       rows.sort(function(a,b){
-        var da = _asDate(a.data[BC.BILL_DATE]).getTime();
-        var db = _asDate(b.data[BC.BILL_DATE]).getTime();
+        var da = (_billDate(a.data) || new Date(0)).getTime();   // an undated bill counts as the oldest, not as today
+        var db = (_billDate(b.data) || new Date(0)).getTime();
         return da - db;
       });
 
@@ -632,7 +698,7 @@ function listBills(filters){
         var hay = (_s(r[BC.VEND_NAME])+' '+_s(r[BC.BILL_NO])+' '+_s(r[BC.NOTES])+' '+descHay+' '+_s(r[BC.ID])).toLowerCase();
         if (hay.indexOf(q) === -1) continue;
       }
-      var dueDate = _asDate(r[BC.DUE_DATE]);
+      var dueDate = (_billDue(r) || new Date());
       var outstanding = _n(r[BC.OUTSTANDING]);
       var daysOverdue = 0;
       if (outstanding > 0 && dueDate < today){
@@ -645,8 +711,8 @@ function listBills(filters){
         billNo:       _s(r[BC.BILL_NO]),
         // Serialise dates to yyyy-MM-dd — raw Date objects sometimes fail
         // google.script.run's JSON pass and return null for the entire response.
-        billDate:     _safeDateStr(r[BC.BILL_DATE]),
-        dueDate:      _safeDateStr(r[BC.DUE_DATE]),
+        billDate:     _safeDateStr(_billDate(r)),
+        dueDate:      _safeDateStr(_billDue(r)),
         fy:           _s(r[BC.FY]),
         amount:       _n(r[BC.AMOUNT]),
         outstanding:  outstanding,
@@ -776,7 +842,7 @@ function checkDuplicateBill(vendorId, billNo){
       return {
         exists: true,
         billId: _s(rows[i][BC.ID]),
-        billDate: _safeDateStr(rows[i][BC.BILL_DATE]),
+        billDate: _safeDateStr(_billDate(rows[i])),
         amount: _n(rows[i][BC.AMOUNT]),
         status: _s(rows[i][BC.STATUS]),
         project: w > BC.PROJECT ? _s(rows[i][BC.PROJECT]) : ''
@@ -832,7 +898,7 @@ function getVendorLedger(vendorId){
         };
         if (_s(b[i][BC.STATUS]) === BILL_STATUS.CANCELLED) continue;
         entries.push({
-          date: _safeDateStr(b[i][BC.BILL_DATE]),
+          date: _safeDateStr(_billDate(b[i])),
           type: 'Bill',
           ref: _s(b[i][BC.ID]),                // our internal (BILL-0005)
           vendorRef: _s(b[i][BC.BILL_NO]),     // vendor's bill/PI number
@@ -841,7 +907,7 @@ function getVendorLedger(vendorId){
           project: _s(b[i][BC.PROJECT]),
           applied: '',
           unapplied: 0,
-          sortKey: _asDate(b[i][BC.BILL_DATE]).getTime()
+          sortKey: (_billDate(b[i]) || new Date(0)).getTime()
         });
       }
     }
@@ -919,7 +985,7 @@ function dashApAgeing(filters){
         if (out <= 0) return;
         if (_s(r[BC.STATUS]) === BILL_STATUS.CANCELLED) return;
         if (wantFy && _s(r[BC.FY]) !== wantFy) return;
-        var due = _asDate(r[BC.DUE_DATE]);
+        var due = (_billDue(r) || new Date());
         var days = Math.floor((today.getTime() - due.getTime()) / 86400000);
         if (days <= 0)        buckets.current  += out;
         else if (days <= 30)  buckets.b30      += out;
@@ -956,7 +1022,7 @@ function listPendingBills(filters){
       if (status !== 'Unpaid' && status !== 'Partial') return;
       var outstanding = _n(r[BC.OUTSTANDING]);
       if (outstanding <= 0) return;
-      var dueDate = _asDate(r[BC.DUE_DATE]);
+      var dueDate = (_billDue(r) || new Date());
       var daysOverdue = 0;
       if (dueDate && dueDate < today){
         daysOverdue = Math.floor((today.getTime() - dueDate.getTime()) / 86400000);
@@ -1670,8 +1736,8 @@ function getProjectDetailBills(project){
         id:         _s(r[BC.ID]),
         billNo:     _s(r[BC.BILL_NO]),
         vendor:     _s(r[BC.VEND_NAME]),
-        billDate:   _safeDateStr(r[BC.BILL_DATE]),
-        dueDate:    _safeDateStr(r[BC.DUE_DATE]),
+        billDate:   _safeDateStr(_billDate(r)),
+        dueDate:    _safeDateStr(_billDue(r)),
         amount:     _n(r[BC.AMOUNT]) || 0,
         paid:       _n(r[BC.PAID]) || 0,
         outstanding:_n(r[BC.OUTSTANDING]) || 0,

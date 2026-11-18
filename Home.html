@@ -817,7 +817,7 @@
         <div class="grid-2">
           <div class="field"><label>Invoice No *
             <span class="small muted">the number that appears on the printed invoice (e.g. 3S/2526/045)</span></label>
-            <input class="input" id="i-no" placeholder="3S/FY/nnn" /></div>
+            <input class="input" id="i-no" placeholder="TSP/TI/26-27/042" /></div>
           <div class="field"><label>Customer *
             <span class="small muted">who this invoice is being raised on</span></label>
             <select class="select" id="i-cust"></select></div>
@@ -7012,6 +7012,8 @@ function submitInvoice(){
     }
   }
   if (!data.invoiceNo || !data.customerId){ toast('Invoice number and customer are required','err'); return; }
+  // the number comes from DocGen's Tax Invoice (TSP/TI/26-27/042); anything else is saved as typed, with a heads-up
+  if (!/^TSP\/TI\/\d{2}-\d{2}\/\d{3,}$/.test(data.invoiceNo)) toast('Note: the standard Tax Invoice number looks like TSP/TI/26-27/042. Saved as typed.', 'ok');
   if (gst){
     data.taxable = parseFloat($('i-tax').value)||0;
     data.gstRate = parseFloat($('i-rate').value)||0;

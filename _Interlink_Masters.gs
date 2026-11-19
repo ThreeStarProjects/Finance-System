@@ -311,7 +311,8 @@ function IM_dcHardwareLines_(ims, rates) {
     if (!dc || r[2] !== 'Hardware' || !r[3] || !rates[r[3]]) return;
     var qty = IM_round_((Number(r[5]) || 0) - (Number(r[9]) || 0), 4);
     if (qty < 0) qty = 0;
-    out.push({ key: 'DC:' + r[0] + ':L' + r[1], dc: true, date: dc.date, prj: dc.prj, code: r[3], qty: qty, unit: r[6],
+    // 043A / 043B keep the key of 043: a new version is the same challan, so it is never counted twice
+    out.push({ key: 'DC:' + String(r[0]).replace(/^(.*\d)[A-Z]*$/, '$1') + ':L' + r[1], dc: true, date: dc.date, prj: dc.prj, code: r[3], qty: qty, unit: r[6],
                item: rates[r[3]].name || r[4] || r[3] });
   });
   return out;

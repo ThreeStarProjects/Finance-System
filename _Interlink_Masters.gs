@@ -294,6 +294,29 @@ function IM_syncFinanceProjectsNow() {
     (r.deactivated ? ' ' + r.deactivated + ' deactivated.' : '') + (r.warnings.length ? ' ' + r.warnings.join(' ') : ''), '🔗 Interlink', 8);
 }
 
+/**
+ * Hardware lines of Customer Delivery Challans for a PRJ-### project, net of returns, as import lines.
+ * Needs a valid IMS item code (that is what makes the line move stock too). Internal DCs and lines with no code are skipped.
+ */
+function IM_dcHardwareLines_(ims, rates) {
+  var reg = ims.getSheetByName('FG Delivery Register'), dl = ims.getSheetByName('FG Delivery Lines'), out = [];
+  if (!reg || !dl || reg.getLastRow() < 2 || dl.getLastRow() < 2) return out;
+  var dcs = {};
+  reg.getRange(2, 1, reg.getLastRow() - 1, 21).getValues().forEach(function (r) {
+    var m = /^PRJ-\d+/i.exec(String(r[4] || '').trim());
+    if (r[1] && m && String(r[20] || 'Customer') !== 'Internal') dcs[r[1]] = { date: IM_dateStr_(r[2]), prj: m[0].toUpperCase() };
+  });
+  dl.getRange(2, 1, dl.getLastRow() - 1, 10).getValues().forEach(function (r) {
+    var dc = dcs[r[0]];
+    if (!dc || r[2] !== 'Hardware' || !r[3] || !rates[r[3]]) return;
+    var qty = IM_round_((Number(r[5]) || 0) - (Number(r[9]) || 0), 4);
+    if (qty < 0) qty = 0;
+    out.push({ key: 'DC:' + r[0] + ':L' + r[1], dc: true, date: dc.date, prj: dc.prj, code: r[3], qty: qty, unit: r[6],
+               item: rates[r[3]].name || r[4] || r[3] });
+  });
+  return out;
+}
+
 /** The import. Safe to run any time, as often as you like: it only ever adds what is new. */
 function IM_importImsCosts() {
   var lock = LockService.getDocumentLock();
@@ -326,10 +349,22 @@ function IM_importImsCostsLocked_() {
                  item: (rates[code] && rates[code].name) || r[5] || code });
   });
 
+  // 1b. hardware sent to a PRJ project on a Customer Delivery Challan: counts as consumed, NET of what came back (qty - returned).
+  //     Key "DC:<dcNo>:L<line>". The same project + item group as the requisitions, so one Project_Costs row per item.
+  IM_dcHardwareLines_(ims, rates).forEach(function (l) { res.imsLines++; res.prjLines++; present[l.key] = true; lines.push(l); });
+
   // 2. price + group the lines not seen before
   var log = IM_logSheet_();
   var logRows = log.getLastRow() >= 2 ? log.getRange(2, 1, log.getLastRow() - 1, IM_LOG_HEAD.length).getValues() : [];
   var seen = {}; logRows.forEach(function (r) { seen[r[IML.LINE]] = true; });
+  // a returned DC line shrinks: re-state its logged qty / amount (the rate stays the one frozen when it was priced)
+  var dcNow = {}; lines.forEach(function (l) { if (l.dc) dcNow[l.key] = l.qty; });
+  logRows.forEach(function (r, i) {
+    var k = r[IML.LINE];
+    if (!/^DC:/.test(k) || r[IML.STATUS] !== 'Imported' || !(k in dcNow) || Math.abs(Number(r[IML.QTY]) - dcNow[k]) < 0.0005) return;
+    r[IML.QTY] = dcNow[k]; r[IML.AMOUNT] = IM_round_(dcNow[k] * Number(r[IML.RATE]), 4);
+    log.getRange(i + 2, IML.QTY + 1).setValue(r[IML.QTY]); log.getRange(i + 2, IML.AMOUNT + 1).setValue(r[IML.AMOUNT]);
+  });
   var groups = IM_groupRows_();
   var open = {};  // "PRJ|CODE" → { key, n } the group new lines go to
   Object.keys(groups.top).forEach(function (k) {
@@ -339,6 +374,7 @@ function IM_importImsCostsLocked_() {
   var newRows = [];
   lines.forEach(function (l) {
     if (seen[l.key]) return;
+    if (l.dc && !(l.qty > 0)) return;   // fully returned before it was ever priced: nothing to count
     if (legacy['IMS:' + l.key]) { newRows.push([l.key, l.date, l.prj, l.code, l.item, l.qty, l.unit, '', '', '', 'Legacy']); return; }
     if (!names[l.prj]) { res.waitingProject++; return; }
     var rate = rates[l.code] ? rates[l.code].rate : 0;

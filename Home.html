@@ -9016,7 +9016,7 @@ function hpcSingleUpdateFields(){
       '<div class="grid-3">' +
         '<div class="field"><label>Material Name *</label><input class="input" type="text" id="hpc-single-matname" placeholder="e.g. Cement" /></div>' +
         '<div class="field"><label>Quantity *</label><input class="input" type="number" id="hpc-single-qty" min="0" step="0.01" oninput="hpcSingleCalcTotal()" /></div>' +
-        '<div class="field"><label>Unit *</label><input class="input" type="text" id="hpc-single-unit" placeholder="Bag, Kg, Nos" /></div>' +
+        '<div class="field"><label>Unit *</label><select class="input" id="hpc-single-unit">' + uomOptions_() + '</select></div>' +
       '</div>' +
       '<div class="grid-2">' +
         '<div class="field"><label>Rate per unit (₹) *</label><input class="input" type="number" id="hpc-single-rate" min="0" step="0.01" oninput="hpcSingleCalcTotal()" /></div>' +

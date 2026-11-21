@@ -672,7 +672,7 @@ function pcUpdateFields(){
   if(type === 'Material'){
     html = '<div class="field"><label>Material Name *</label><input class="input pc-field" data-field="materialName" type="text" placeholder="e.g. Cement"></div>' +
            '<div style="display:flex; gap:12px;"><div class="field" style="flex:1"><label>Quantity *</label><input class="input pc-field" data-field="quantity" type="number" min="0" step=".01" oninput="pcCalcTotal()" placeholder="50"></div>' +
-           '<div class="field" style="flex:1"><label>Unit *</label><input class="input pc-field" data-field="unit" type="text" placeholder="Bag, Kg"></div>' +
+           '<div class="field" style="flex:1"><label>Unit *</label><select class="input pc-field" data-field="unit">' + uomOptions_() + '</select></div>' +
            '<div class="field" style="flex:1"><label>Rate/Unit (₹) *</label><input class="input pc-field" data-field="rate" type="number" min="0" step=".01" oninput="pcCalcTotal()" placeholder="600"></div></div>' +
            '<div class="field"><label>Amount Ex-GST (auto)</label><input class="input" type="text" id="pc-base" readonly style="background:#f1f5f9;"></div>' +
            '<div style="display:flex; gap:12px;">' +

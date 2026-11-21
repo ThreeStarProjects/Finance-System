@@ -23,6 +23,9 @@ function shortINR(v){ var n=parseFloat(v)||0;
   if (Math.abs(n)>=1e5) return '₹'+(n/1e5).toFixed(1)+'L';
   if (Math.abs(n)>=1e3) return '₹'+(n/1e3).toFixed(0)+'k';
   return '₹'+n.toFixed(0); }
+/* The ONE unit list of every 3SP system (IMS Dropdowns, PM UOM_LIST, DocGen UNITS): keep identical. */
+var UOM_LIST = ['No.s', 'Pieces', 'Units', 'Sets', 'Pairs', 'Boxes', 'Packets', 'Bundles', 'Rolls', 'Sheets', 'Boards', 'Panels', 'Plates', 'Bars', 'Rods', 'Pipes', 'Tubes', 'Coils', 'Reels', 'Meters', 'Running Feet', 'Square Feet', 'Square Meters', 'Cubic Feet', 'Cubic Meters', 'Kilograms', 'Grams', 'Metric Tons', 'Liters', 'Milliliters', 'Bags', 'Cartons', 'Drums', 'Buckets', 'Cans', 'Bottles', 'Pouches', 'Trays', 'Pallets', 'Containers', 'Loads', 'Lots', 'Hours', 'Days', 'Services', 'Jobs', 'Projects', 'Kits', 'Assemblies', 'Length', 'Weight', 'Volume', 'Area', 'Sq.ft', 'Sq.m', 'Pcs', 'Box', 'Roll', 'Kg', 'Meter', 'Set', 'Other'];
+function uomOptions_(sel){ return '<option value="">-- Unit --</option>' + UOM_LIST.map(function(u){ return '<option' + (u === sel ? ' selected' : '') + '>' + u + '</option>'; }).join(''); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function todayISO(){ return new Date().toISOString().split('T')[0]; }
 function fmtDate(d){
